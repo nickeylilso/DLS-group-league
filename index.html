@@ -1,0 +1,176 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>DLS Group Rankings</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+<div class="wrap">
+  <header>
+    <div class="kicker">Season 01 · Matchday Table</div>
+    <h1>DLS Group Rankings</h1>
+    <div class="sub" id="subLine">Live table · updates automatically</div>
+  </header>
+
+  <div id="announcementBox"></div>
+
+  <div class="table-card">
+    <div class="thead">
+      <span>#</span>
+      <span>Club</span>
+      <span>MP</span>
+      <span>W</span>
+      <span>D</span>
+      <span>L</span>
+      <span>GF</span>
+      <span>GA</span>
+      <span>Pts</span>
+    </div>
+    <div id="tableBody"></div>
+  </div>
+
+  <div id="matchFeedBox"></div>
+
+  <footer>
+    <div>DLS GROUP RANKINGS · VIEW ONLY</div>
+    <a class="admin-link" href="admin.html">Admin login →</a>
+  </footer>
+</div>
+
+<script src="data.js"></script>
+<script>
+  const REFRESH_MS = 6000;
+
+  function badgeHTML(team, size){
+    if(team.logo){
+      return `<img class="badge" style="width:${size}px;height:${size}px;" src="${team.logo}" alt="">`;
+    }
+    const initials = team.name.split(' ').map(w => w[0]).slice(0,2).join('').toUpperCase();
+    return `<div class="badge-fallback" style="width:${size}px;height:${size}px;">${initials}</div>`;
+  }
+
+  function renderAnnouncement(data){
+    const box = document.getElementById('announcementBox');
+    if(!data.announcement){
+      box.innerHTML = '';
+      return;
+    }
+    box.innerHTML = `
+      <div class="announcement">
+        <div class="announcement-label">📣 Announcement</div>
+        <div class="announcement-text"></div>
+      </div>
+    `;
+    box.querySelector('.announcement-text').textContent = data.announcement;
+  }
+
+  function renderTable(data){
+    const sorted = sortTeams(data.teams);
+    const body = document.getElementById('tableBody');
+    body.innerHTML = '';
+
+    if(sorted.length === 0){
+      body.innerHTML = '<div class="empty-state">No teams yet. Check back soon.</div>';
+      return;
+    }
+
+    sorted.forEach((t, i) => {
+      const row = document.createElement('div');
+      row.className = 'row';
+      row.innerHTML = `
+        <div class="pos">${i+1}</div>
+        <div class="team-cell">
+          ${badgeHTML(t, 26)}
+          <div>
+            <div class="team-name"></div>
+            ${i === 0 ? '<div class="champion-tag">CHAMPION</div>' : ''}
+          </div>
+        </div>
+        <div class="wdl">${t.played}</div>
+        <div class="wdl">${t.w}</div>
+        <div class="wdl">${t.d}</div>
+        <div class="wdl">${t.l}</div>
+        <div class="wdl">${t.gf}</div>
+        <div class="wdl">${t.ga}</div>
+        <div class="pts">${t.pts}</div>
+      `;
+      row.querySelector('.team-name').textContent = t.name;
+      body.appendChild(row);
+    });
+  }
+
+  function renderMatchFeed(data){
+    const box = document.getElementById('matchFeedBox');
+    if(data.matches.length === 0){
+      box.innerHTML = '';
+      return;
+    }
+    const teamMap = Object.fromEntries(data.teams.map(t => [t.id, t]));
+    const cards = data.matches.slice(0, 12).map(m => {
+      const a = teamMap[m.teamAId];
+      const b = teamMap[m.teamBId];
+      if(!a || !b) return '';
+      return `
+        <div class="match-card">
+          <div class="match-team">
+            ${badgeHTML(a, 22)}
+            <span class="match-team-name" data-name="a"></span>
+          </div>
+          <div class="match-score">${m.scoreA} – ${m.scoreB}</div>
+          <div class="match-team right">
+            <span class="match-team-name" data-name="b" style="text-align:right;"></span>
+            ${badgeHTML(b, 22)}
+          </div>
+          <div class="match-time">${timeAgo(m.ts)}</div>
+        </div>
+      `;
+    }).join('');
+
+    box.innerHTML = `
+      <div class="panel">
+        <div class="panel-title">Recent results</div>
+        <div class="panel-hint">Latest matches, newest first.</div>
+        <div id="matchCardsWrap"></div>
+      </div>
+    `;
+    const wrap = document.getElementById('matchCardsWrap');
+    wrap.innerHTML = cards;
+
+    let idx = 0;
+    data.matches.slice(0, 12).forEach(m => {
+      const a = teamMap[m.teamAId];
+      const b = teamMap[m.teamBId];
+      if(!a || !b) return;
+      const cardEls = wrap.querySelectorAll('.match-card')[idx];
+      if(cardEls){
+        cardEls.querySelector('[data-name="a"]').textContent = a.name;
+        cardEls.querySelector('[data-name="b"]').textContent = b.name;
+      }
+      idx++;
+    });
+  }
+
+  async function refresh(showError){
+    try{
+      const data = await fetchData();
+      renderAnnouncement(data);
+      renderTable(data);
+      renderMatchFeed(data);
+      document.getElementById('subLine').textContent = 'Live table · updates automatically';
+    }catch(e){
+      if(showError){
+        document.getElementById('subLine').textContent = 'Could not load latest data — showing last known table';
+      }
+      console.error(e);
+    }
+  }
+
+  refresh(true);
+  setInterval(() => refresh(false), REFRESH_MS);
+</script>
+
+</body>
+</html>
