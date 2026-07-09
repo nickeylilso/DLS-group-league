@@ -1,0 +1,332 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Admin — DLS Group Rankings</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+<!-- LOCK SCREEN -->
+<div class="lock-screen" id="lockScreen">
+  <div class="kicker">Restricted</div>
+  <h1 style="font-size:24px;">Admin Access</h1>
+  <p class="sub" style="margin-bottom:20px;">Enter the password to manage the table.</p>
+  <input type="password" id="pwInput" placeholder="Password" autocomplete="off">
+  <button class="btn-primary" id="unlockBtn">Unlock</button>
+  <div class="lock-error" id="lockError"></div>
+  <button class="text-link" onclick="location.href='index.html'">← Back to table</button>
+</div>
+
+<!-- ADMIN PANEL -->
+<div class="wrap" id="adminWrap" style="display:none;">
+  <header>
+    <div class="kicker">Admin · Season 01</div>
+    <h1>Manage Table</h1>
+    <div class="sub" id="subLine">Loading…</div>
+    <a class="admin-link" href="index.html" style="margin-top:10px;">← Back to public table</a>
+  </header>
+
+  <div class="table-card">
+    <div class="thead">
+      <span>#</span>
+      <span>Club</span>
+      <span>MP</span>
+      <span>W</span>
+      <span>D</span>
+      <span>L</span>
+      <span>GF</span>
+      <span>GA</span>
+      <span>Pts</span>
+    </div>
+    <div id="tableBody"></div>
+  </div>
+
+  <div class="panel">
+    <div class="panel-title">Log a result</div>
+    <div class="panel-hint">Pick two clubs, enter the score, save.</div>
+    <div id="matchFormBox"></div>
+  </div>
+
+  <div class="panel">
+    <div class="panel-title">Manage teams</div>
+    <div class="panel-hint">Add clubs, upload a logo, or remove a team.</div>
+
+    <div class="add-team-row">
+      <input type="text" id="newTeamName" placeholder="New team name" autocomplete="off">
+      <button class="btn-add" id="addTeamBtn">Add</button>
+    </div>
+
+    <div id="teamListBox" class="team-list"></div>
+  </div>
+
+  <div class="panel">
+    <div class="panel-title">Homepage announcement</div>
+    <div class="panel-hint">Shown as a banner above the table. Leave blank to hide it.</div>
+    <textarea id="announceInput" rows="3" placeholder="e.g. Matchday 5 fixtures out now — get your results in!"></textarea>
+    <button class="btn-primary" id="saveAnnounceBtn">Save announcement</button>
+  </div>
+
+  <div class="panel">
+    <div class="panel-title">Danger zone</div>
+    <div class="panel-hint">These actions cannot be undone.</div>
+    <div class="btn-row">
+      <button class="btn-ghost" id="resetBtn">Reset season</button>
+      <button class="btn-ghost" id="clearAllBtn">Clear all teams</button>
+    </div>
+  </div>
+
+  <div class="status" id="status"></div>
+
+  <footer>
+    <div>DLS GROUP RANKINGS · ADMIN</div>
+  </footer>
+</div>
+
+<script src="data.js"></script>
+<script>
+  const lockScreen = document.getElementById('lockScreen');
+  const adminWrap = document.getElementById('adminWrap');
+  const lockError = document.getElementById('lockError');
+  const statusEl = document.getElementById('status');
+
+  let data = emptyState();
+  let isSaving = false;
+
+  function tryUnlock(){
+    const val = document.getElementById('pwInput').value;
+    if(val === ADMIN_PASSWORD){
+      lockScreen.style.display = 'none';
+      adminWrap.style.display = 'block';
+      sessionStorage.setItem(ADMIN_SESSION_KEY, '1');
+      loadAndRender();
+    } else {
+      lockError.textContent = 'Wrong password — try again';
+      document.getElementById('pwInput').value = '';
+    }
+  }
+  document.getElementById('unlockBtn').addEventListener('click', tryUnlock);
+  document.getElementById('pwInput').addEventListener('keydown', e => { if(e.key==='Enter') tryUnlock(); });
+
+  if(sessionStorage.getItem(ADMIN_SESSION_KEY) === '1'){
+    lockScreen.style.display = 'none';
+    adminWrap.style.display = 'block';
+    loadAndRender();
+  }
+
+  function showStatus(msg, isError){
+    statusEl.textContent = msg;
+    statusEl.style.color = isError ? 'var(--red)' : 'var(--green)';
+    setTimeout(() => { if(statusEl.textContent === msg) statusEl.textContent = ''; }, 2500);
+  }
+
+  async function loadAndRender(){
+    document.getElementById('subLine').textContent = 'Loading…';
+    try{
+      data = await fetchData();
+      document.getElementById('announceInput').value = data.announcement || '';
+      document.getElementById('subLine').textContent = 'Changes save automatically';
+      renderAll();
+    }catch(e){
+      document.getElementById('subLine').textContent = 'Could not load data — check connection';
+      console.error(e);
+    }
+  }
+
+  async function saveAndRender(){
+    isSaving = true;
+    document.getElementById('subLine').textContent = 'Saving…';
+    try{
+      await pushData(data);
+      document.getElementById('subLine').textContent = 'Changes save automatically';
+    }catch(e){
+      showStatus('Save failed: ' + (e.message || 'unknown error'), true);
+      console.error(e);
+    }finally{
+      isSaving = false;
+    }
+    renderAll();
+  }
+
+  function badgeHTML(team, size){
+    if(team.logo){
+      return `<img class="badge" style="width:${size}px;height:${size}px;" src="${team.logo}" alt="">`;
+    }
+    const initials = team.name.split(' ').map(w => w[0]).slice(0,2).join('').toUpperCase();
+    return `<div class="badge-fallback" style="width:${size}px;height:${size}px;">${initials}</div>`;
+  }
+
+  function renderAll(){
+    renderTable();
+    renderMatchForm();
+    renderTeamList();
+  }
+
+  function renderTable(){
+    const sorted = sortTeams(data.teams);
+    const body = document.getElementById('tableBody');
+    body.innerHTML = '';
+    if(sorted.length === 0){
+      body.innerHTML = '<div class="empty-state">No teams yet — add one below.</div>';
+      return;
+    }
+    sorted.forEach((t, i) => {
+      const row = document.createElement('div');
+      row.className = 'row';
+      row.innerHTML = `
+        <div class="pos">${i+1}</div>
+        <div class="team-cell">
+          ${badgeHTML(t, 26)}
+          <div class="team-name"></div>
+        </div>
+        <div class="wdl">${t.played}</div>
+        <div class="wdl">${t.w}</div>
+        <div class="wdl">${t.d}</div>
+        <div class="wdl">${t.l}</div>
+        <div class="wdl">${t.gf}</div>
+        <div class="wdl">${t.ga}</div>
+        <div class="pts">${t.pts}</div>
+      `;
+      row.querySelector('.team-name').textContent = t.name;
+      body.appendChild(row);
+    });
+  }
+
+  function renderMatchForm(){
+    const box = document.getElementById('matchFormBox');
+    if(data.teams.length < 2){
+      box.innerHTML = '<div class="empty-state-small">Add at least 2 teams first.</div>';
+      return;
+    }
+    const options = data.teams.map(t => `<option value="${t.id}">${escapeHTML(t.name)}</option>`).join('');
+    box.innerHTML = `
+      <div class="match-row">
+        <select id="teamA">${options}</select>
+        <input type="number" id="scoreA" min="0" value="0" inputmode="numeric">
+        <span class="vs">–</span>
+        <input type="number" id="scoreB" min="0" value="0" inputmode="numeric">
+        <select id="teamB">${options}</select>
+      </div>
+      <button class="btn-primary" id="saveMatchBtn">Save result</button>
+    `;
+    if(data.teams.length > 1) document.getElementById('teamB').selectedIndex = 1;
+
+    document.getElementById('saveMatchBtn').addEventListener('click', async () => {
+      const teamAId = document.getElementById('teamA').value;
+      const teamBId = document.getElementById('teamB').value;
+      const scoreA = parseInt(document.getElementById('scoreA').value, 10) || 0;
+      const scoreB = parseInt(document.getElementById('scoreB').value, 10) || 0;
+      if(teamAId === teamBId){
+        showStatus('Pick two different clubs', true);
+        return;
+      }
+      recordResult(data, teamAId, scoreA, teamBId, scoreB);
+      await saveAndRender();
+      showStatus('Result saved — table updated', false);
+    });
+  }
+
+  function escapeHTML(str){
+    const div = document.createElement('div');
+    div.textContent = str;
+    return div.innerHTML;
+  }
+
+  function renderTeamList(){
+    const box = document.getElementById('teamListBox');
+    box.innerHTML = '';
+    if(data.teams.length === 0){
+      box.innerHTML = '<div class="empty-state-small">No teams yet — add one above.</div>';
+      return;
+    }
+    data.teams.forEach(t => {
+      const item = document.createElement('div');
+      item.className = 'team-list-item';
+      item.innerHTML = `
+        <button class="logo-button" data-id="${t.id}" title="Upload logo">
+          ${badgeHTML(t, 38)}
+          <span class="logo-overlay">✎</span>
+        </button>
+        <input type="file" accept="image/*" style="display:none;" data-file-for="${t.id}">
+        <span class="team-list-name"></span>
+        <button class="btn-remove" data-remove="${t.id}">Remove</button>
+      `;
+      item.querySelector('.team-list-name').textContent = t.name;
+      box.appendChild(item);
+    });
+
+    box.querySelectorAll('.logo-button').forEach(btn => {
+      btn.addEventListener('click', () => {
+        const id = btn.getAttribute('data-id');
+        box.querySelector(`input[data-file-for="${id}"]`).click();
+      });
+    });
+
+    box.querySelectorAll('input[type=file]').forEach(input => {
+      input.addEventListener('change', async (e) => {
+        const id = input.getAttribute('data-file-for');
+        const file = e.target.files[0];
+        if(!file) return;
+        if(!file.type.startsWith('image/')){ showStatus('Pick an image file', true); return; }
+        if(file.size > 2 * 1024 * 1024){ showStatus('Image too large (max 2MB)', true); return; }
+        const reader = new FileReader();
+        reader.onload = async () => {
+          setTeamLogo(data, id, reader.result);
+          await saveAndRender();
+          showStatus('Logo updated', false);
+        };
+        reader.readAsDataURL(file);
+      });
+    });
+
+    box.querySelectorAll('.btn-remove').forEach(btn => {
+      btn.addEventListener('click', async () => {
+        const id = btn.getAttribute('data-remove');
+        const team = data.teams.find(t => t.id === id);
+        if(!team) return;
+        if(!confirm(`Remove ${team.name}? This deletes their record and match history.`)) return;
+        removeTeam(data, id);
+        await saveAndRender();
+        showStatus(`${team.name} removed`, false);
+      });
+    });
+  }
+
+  document.getElementById('addTeamBtn').addEventListener('click', async () => {
+    const input = document.getElementById('newTeamName');
+    const name = input.value.trim();
+    if(!name){ showStatus('Enter a team name', true); return; }
+    const added = addTeam(data, name);
+    if(!added){ showStatus('Team already exists', true); return; }
+    input.value = '';
+    await saveAndRender();
+    showStatus(`${name} added`, false);
+  });
+  document.getElementById('newTeamName').addEventListener('keydown', e => {
+    if(e.key === 'Enter') document.getElementById('addTeamBtn').click();
+  });
+
+  document.getElementById('saveAnnounceBtn').addEventListener('click', async () => {
+    data.announcement = document.getElementById('announceInput').value;
+    await saveAndRender();
+    showStatus('Announcement updated', false);
+  });
+
+  document.getElementById('resetBtn').addEventListener('click', async () => {
+    if(!confirm('Reset every team back to 0 points? Match history will be cleared.')) return;
+    resetSeason(data);
+    await saveAndRender();
+    showStatus('Season reset', false);
+  });
+
+  document.getElementById('clearAllBtn').addEventListener('click', async () => {
+    if(!confirm('Clear ALL teams and match history? This cannot be undone.')) return;
+    clearAllTeams(data);
+    await saveAndRender();
+    showStatus('All teams cleared', false);
+  });
+</script>
+
+</body>
+</html>
