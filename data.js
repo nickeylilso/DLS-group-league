@@ -72,6 +72,7 @@ function removeTeam(data, id) {
   if (idx === -1) return false;
   data.teams.splice(idx, 1);
   data.matches = data.matches.filter(m => m.teamAId !== id && m.teamBId !== id);
+  recalculateAllStats(data);
   return true;
 }
 
@@ -82,22 +83,66 @@ function setTeamLogo(data, id, dataUrl) {
   return true;
 }
 
+function editTeamName(data, id, newName) {
+  const trimmed = (newName || "").trim();
+  if (!trimmed) return false;
+  const clash = data.teams.some(t => t.id !== id && t.name.toLowerCase() === trimmed.toLowerCase());
+  if (clash) return false;
+  const t = data.teams.find(x => x.id === id);
+  if (!t) return false;
+  t.name = trimmed;
+  return true;
+}
+
+function gd(team) {
+  return team.gf - team.ga;
+}
+
 function recordResult(data, teamAId, scoreA, teamBId, scoreB) {
   if (teamAId === teamBId) return false;
   const a = data.teams.find(t => t.id === teamAId);
   const b = data.teams.find(t => t.id === teamBId);
   if (!a || !b) return false;
 
-  a.played++; b.played++;
-  a.gf += scoreA; a.ga += scoreB;
-  b.gf += scoreB; b.ga += scoreA;
-
-  if (scoreA > scoreB) { a.w++; a.pts += 3; b.l++; }
-  else if (scoreA < scoreB) { b.w++; b.pts += 3; a.l++; }
-  else { a.d++; b.d++; a.pts += 1; b.pts += 1; }
-
   data.matches.unshift({ id: uid(), teamAId, teamBId, scoreA, scoreB, ts: Date.now() });
+  recalculateAllStats(data);
   return true;
+}
+
+function editMatchResult(data, matchId, newScoreA, newScoreB) {
+  const m = data.matches.find(x => x.id === matchId);
+  if (!m) return false;
+  m.scoreA = newScoreA;
+  m.scoreB = newScoreB;
+  // ts is untouched on purpose — editing a result must not change when it was played
+  recalculateAllStats(data);
+  return true;
+}
+
+function recalculateAllStats(data) {
+  // reset every team's stats, then replay full match history to rebuild them.
+  // This keeps edits/removals of any match always consistent, no matter the order.
+  data.teams.forEach(t => {
+    t.played = 0; t.w = 0; t.d = 0; t.l = 0; t.gf = 0; t.ga = 0; t.pts = 0;
+  });
+  const teamById = Object.fromEntries(data.teams.map(t => [t.id, t]));
+
+  // replay oldest-first so it doesn't matter that matches[] is stored newest-first
+  const chronological = [...data.matches].sort((x, y) => x.ts - y.ts);
+
+  chronological.forEach(m => {
+    const a = teamById[m.teamAId];
+    const b = teamById[m.teamBId];
+    if (!a || !b) return; // team was removed since — skip safely
+
+    a.played++; b.played++;
+    a.gf += m.scoreA; a.ga += m.scoreB;
+    b.gf += m.scoreB; b.ga += m.scoreA;
+
+    if (m.scoreA > m.scoreB) { a.w++; a.pts += 3; b.l++; }
+    else if (m.scoreA < m.scoreB) { b.w++; b.pts += 3; a.l++; }
+    else { a.d++; b.d++; a.pts += 1; b.pts += 1; }
+  });
 }
 
 function resetSeason(data) {
@@ -119,4 +164,4 @@ function timeAgo(ts) {
   if (diff < hr) return Math.floor(diff / min) + "m ago";
   if (diff < day) return Math.floor(diff / hr) + "h ago";
   return Math.floor(diff / day) + "d ago";
-}
+    }
