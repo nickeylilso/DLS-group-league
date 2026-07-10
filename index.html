@@ -27,6 +27,7 @@
       <span>L</span>
       <span>GF</span>
       <span>GA</span>
+      <span>GD</span>
       <span>Pts</span>
     </div>
     <div id="tableBody"></div>
@@ -95,6 +96,7 @@
         <div class="wdl">${t.l}</div>
         <div class="wdl">${t.gf}</div>
         <div class="wdl">${t.ga}</div>
+        <div class="wdl">${t.gf - t.ga > 0 ? '+' : ''}${t.gf - t.ga}</div>
         <div class="pts">${t.pts}</div>
       `;
       row.querySelector('.team-name').textContent = t.name;
