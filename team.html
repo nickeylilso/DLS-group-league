@@ -1,0 +1,237 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Team Stats — DLS Championship</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+<div class="wrap">
+  <header>
+    <a class="admin-link" href="index.html" style="margin-bottom:14px; display:inline-block;">← Back to table</a>
+  </header>
+
+  <div id="teamHeaderBox"></div>
+  <div id="teamStatsBox"></div>
+  <div id="teamGraphBox"></div>
+  <div id="teamFixturesBox"></div>
+  <div id="teamMatchesBox"></div>
+
+  <footer>
+    <div>DLS CHAMPIONSHIP · TEAM STATS</div>
+  </footer>
+</div>
+
+<script src="data.js"></script>
+<script>
+  const params = new URLSearchParams(window.location.search);
+  const teamId = params.get('id');
+
+  function badgeHTML(team, size){
+    if(team.logo){
+      return `<img class="badge" style="width:${size}px;height:${size}px;" src="${team.logo}" alt="">`;
+    }
+    const initials = team.name.split(' ').map(w => w[0]).slice(0,2).join('').toUpperCase();
+    return `<div class="badge-fallback" style="width:${size}px;height:${size}px;">${initials}</div>`;
+  }
+
+  function formHTML(team){
+    if(!team.form || team.form.length === 0) return '<div class="empty-state-small">No matches played yet.</div>';
+    const chips = team.form.map(r => {
+      const cls = r === 'W' ? 'form-w' : r === 'D' ? 'form-d' : 'form-l';
+      return `<span class="form-chip form-chip-lg ${cls}">${r}</span>`;
+    }).join('');
+    return `<div class="form-strip">${chips}</div>`;
+  }
+
+  function renderHeader(team, position){
+    const box = document.getElementById('teamHeaderBox');
+    box.innerHTML = `
+      <div class="team-hero">
+        ${badgeHTML(team, 72)}
+        <div class="team-hero-name" id="teamHeroName"></div>
+        <div class="team-hero-pos">Currently #${position} in the table</div>
+      </div>
+    `;
+    document.getElementById('teamHeroName').textContent = team.name;
+  }
+
+  function renderStats(team){
+    const box = document.getElementById('teamStatsBox');
+    box.innerHTML = `
+      <div class="panel">
+        <div class="panel-title">Team Form</div>
+        <div class="panel-hint">Last 5 results, most recent on the right.</div>
+        ${formHTML(team)}
+      </div>
+      <div class="panel">
+        <div class="panel-title">Season Stats</div>
+        <div class="stat-grid">
+          <div class="stat-box"><div class="stat-value">${team.played}</div><div class="stat-label">Matches Played</div></div>
+          <div class="stat-box"><div class="stat-value">${team.gf}</div><div class="stat-label">Goals Scored</div></div>
+          <div class="stat-box"><div class="stat-value">${team.ga}</div><div class="stat-label">Goals Conceded</div></div>
+          <div class="stat-box"><div class="stat-value">${team.gf - team.ga > 0 ? '+' : ''}${team.gf - team.ga}</div><div class="stat-label">Goal Difference</div></div>
+          <div class="stat-box"><div class="stat-value">${team.pts}</div><div class="stat-label">Points</div></div>
+          <div class="stat-box"><div class="stat-value">${team.w}-${team.d}-${team.l}</div><div class="stat-label">W-D-L</div></div>
+        </div>
+      </div>
+    `;
+  }
+
+  function renderGraph(team){
+    const box = document.getElementById('teamGraphBox');
+    const history = team.history || [];
+    if(history.length < 2){
+      box.innerHTML = `
+        <div class="panel">
+          <div class="panel-title">Table Movement</div>
+          <div class="empty-state-small">Not enough match data yet to show movement over time.</div>
+        </div>
+      `;
+      return;
+    }
+
+    const w = 300, h = 120, pad = 20;
+    const positions = history.map(h => h.position);
+    const maxPos = Math.max(...positions, 1);
+    const minPos = 1;
+    const stepX = (w - pad * 2) / (history.length - 1);
+
+    function xFor(i){ return pad + i * stepX; }
+    function yFor(pos){
+      if(maxPos === minPos) return h / 2;
+      return pad + ((pos - minPos) / (maxPos - minPos)) * (h - pad * 2);
+    }
+
+    const points = history.map((pt, i) => `${xFor(i)},${yFor(pt.position)}`).join(' ');
+    const dots = history.map((pt, i) => `<circle cx="${xFor(i)}" cy="${yFor(pt.position)}" r="3" fill="#e8b649"/>`).join('');
+
+    box.innerHTML = `
+      <div class="panel">
+        <div class="panel-title">Table Movement</div>
+        <div class="panel-hint">Table position after each match (lower is better).</div>
+        <svg viewBox="0 0 ${w} ${h}" class="movement-graph">
+          <polyline points="${points}" fill="none" stroke="#e8b649" stroke-width="2"/>
+          ${dots}
+        </svg>
+      </div>
+    `;
+  }
+
+  function renderFixtures(data, team){
+    const box = document.getElementById('teamFixturesBox');
+    const fixtures = teamFixtures(data, team.id);
+    if(fixtures.length === 0){
+      box.innerHTML = '';
+      return;
+    }
+    const teamMap = Object.fromEntries(data.teams.map(t => [t.id, t]));
+    const cards = fixtures.map(f => {
+      const opponentId = f.teamAId === team.id ? f.teamBId : f.teamAId;
+      const opp = teamMap[opponentId];
+      if(!opp) return '';
+      return `
+        <div class="fixture-card">
+          ${f.matchday ? `<div class="fixture-matchday">MATCHDAY ${f.matchday}</div>` : ''}
+          <div class="fixture-row">
+            <div class="fixture-team">
+              ${badgeHTML(team, 26)}
+              <span class="fixture-team-name">${escapeHTML(team.name)}</span>
+            </div>
+            <div class="fixture-vs">VS</div>
+            <div class="fixture-team right">
+              <span class="fixture-team-name" style="text-align:right;">${escapeHTML(opp.name)}</span>
+              ${badgeHTML(opp, 26)}
+            </div>
+          </div>
+          <div class="fixture-time">${formatKickoff(f.kickoff)}</div>
+        </div>
+      `;
+    }).join('');
+    box.innerHTML = `
+      <div class="panel">
+        <div class="panel-title">Upcoming Fixtures</div>
+        ${cards}
+      </div>
+    `;
+  }
+
+  function renderMatches(data, team){
+    const box = document.getElementById('teamMatchesBox');
+    const matches = teamMatches(data, team.id);
+    if(matches.length === 0){
+      box.innerHTML = `
+        <div class="panel">
+          <div class="panel-title">Matches Played</div>
+          <div class="empty-state-small">No matches played yet.</div>
+        </div>
+      `;
+      return;
+    }
+    const teamMap = Object.fromEntries(data.teams.map(t => [t.id, t]));
+    const cards = matches.map(m => {
+      const a = teamMap[m.teamAId];
+      const b = teamMap[m.teamBId];
+      if(!a || !b) return '';
+      return `
+        <div class="match-card">
+          <div class="match-team">
+            ${badgeHTML(a, 22)}
+            <span class="match-team-name">${escapeHTML(a.name)}</span>
+          </div>
+          <div class="match-score">${m.scoreA} – ${m.scoreB}</div>
+          <div class="match-team right">
+            <span class="match-team-name" style="text-align:right;">${escapeHTML(b.name)}</span>
+            ${badgeHTML(b, 22)}
+          </div>
+          <div class="match-time">${timeAgo(m.ts)}</div>
+        </div>
+      `;
+    }).join('');
+    box.innerHTML = `
+      <div class="panel">
+        <div class="panel-title">Matches Played</div>
+        ${cards}
+      </div>
+    `;
+  }
+
+  function escapeHTML(str){
+    const div = document.createElement('div');
+    div.textContent = str;
+    return div.innerHTML;
+  }
+
+  async function load(){
+    if(!teamId){
+      document.getElementById('teamHeaderBox').innerHTML = '<div class="empty-state">No team specified.</div>';
+      return;
+    }
+    try{
+      const data = await fetchData();
+      const team = data.teams.find(t => t.id === teamId);
+      if(!team){
+        document.getElementById('teamHeaderBox').innerHTML = '<div class="empty-state">Team not found — it may have been removed.</div>';
+        return;
+      }
+      const sorted = sortTeams(data.teams);
+      const position = sorted.findIndex(t => t.id === team.id) + 1;
+
+      renderHeader(team, position);
+      renderStats(team);
+      renderGraph(team);
+      renderFixtures(data, team);
+      renderMatches(data, team);
+    }catch(e){
+      document.getElementById('teamHeaderBox').innerHTML = '<div class="empty-state">Could not load team data — check connection.</div>';
+      console.error(e);
+    }
+  }
+
+  load();
+</script>
+
+</body>
+</html>
