@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Admin — DLS Group Rankings</title>
+<title>Admin — DLS Championship</title>
 <link rel="stylesheet" href="style.css">
 </head>
 <body>
@@ -12,18 +12,33 @@
 <div class="lock-screen" id="lockScreen">
   <div class="kicker">Restricted</div>
   <h1 style="font-size:24px;">Admin Access</h1>
-  <p class="sub" style="margin-bottom:20px;">Enter the password to manage the table.</p>
+  <p class="sub" style="margin-bottom:20px;">Enter the password to manage the site.</p>
   <input type="password" id="pwInput" placeholder="Password" autocomplete="off">
   <button class="btn-primary" id="unlockBtn">Unlock</button>
   <div class="lock-error" id="lockError"></div>
   <button class="text-link" onclick="location.href='index.html'">← Back to table</button>
+  <button class="text-link" id="clearSessionBtn" style="display:block; margin:6px auto 0;">Having trouble? Tap here to reset login</button>
+</div>
+
+<!-- CONFIRM RESULT MODAL -->
+<div class="modal-overlay" id="confirmModalOverlay">
+  <div class="modal-card">
+    <div class="modal-header">
+      <span class="panel-title">Confirm result</span>
+    </div>
+    <div id="confirmModalBody" class="confirm-body"></div>
+    <div class="btn-row">
+      <button class="btn-ghost" id="confirmCancelBtn">Cancel</button>
+      <button class="btn-primary" id="confirmPublishBtn">Publish result</button>
+    </div>
+  </div>
 </div>
 
 <!-- ADMIN PANEL -->
 <div class="wrap" id="adminWrap" style="display:none;">
   <header>
     <div class="kicker">Admin · Season 01</div>
-    <h1>Manage Table</h1>
+    <h1>Manage DLS Championship</h1>
     <div class="sub" id="subLine">Loading…</div>
     <a class="admin-link" href="index.html" style="margin-top:10px;">← Back to public table</a>
   </header>
@@ -47,8 +62,16 @@
   <!-- Log a result -->
   <div class="panel">
     <div class="panel-title">Log a result</div>
-    <div class="panel-hint">Pick two clubs, enter the score, save.</div>
+    <div class="panel-hint">Pick two clubs, enter the score, review, then publish.</div>
     <div id="matchFormBox"></div>
+  </div>
+
+  <!-- Fixtures -->
+  <div class="panel">
+    <div class="panel-title">Fixtures</div>
+    <div class="panel-hint">Schedule upcoming matches. They disappear automatically once a result is published.</div>
+    <div id="fixtureFormBox"></div>
+    <div id="fixtureListBox"></div>
   </div>
 
   <!-- Match history / edit results -->
@@ -71,12 +94,21 @@
     <div id="teamListBox" class="team-list"></div>
   </div>
 
-  <!-- Announcement -->
+  <!-- Announcements -->
   <div class="panel">
-    <div class="panel-title">Homepage announcement</div>
-    <div class="panel-hint">Shown as a banner above the table. Leave blank to hide it.</div>
+    <div class="panel-title">Announcements</div>
+    <div class="panel-hint">Post a new update — viewers see all announcements in the site menu.</div>
     <textarea id="announceInput" rows="3" placeholder="e.g. Matchday 5 fixtures out now — get your results in!"></textarea>
-    <button class="btn-primary" id="saveAnnounceBtn">Save announcement</button>
+    <button class="btn-primary" id="postAnnounceBtn">Post announcement</button>
+    <div id="announceListBox" style="margin-top:14px;"></div>
+  </div>
+
+  <!-- About -->
+  <div class="panel">
+    <div class="panel-title">About Us</div>
+    <div class="panel-hint">Shown to viewers from the site menu.</div>
+    <textarea id="aboutInput" rows="4" placeholder="Tell your friends what this league is about…"></textarea>
+    <button class="btn-primary" id="saveAboutBtn">Save about text</button>
   </div>
 
   <!-- Danger zone -->
@@ -92,7 +124,7 @@
   <div class="status" id="status"></div>
 
   <footer>
-    <div>DLS GROUP RANKINGS · ADMIN</div>
+    <div>DLS CHAMPIONSHIP · ADMIN</div>
   </footer>
 </div>
 
@@ -105,6 +137,7 @@
 
   let data = emptyState();
   let isSaving = false;
+  let pendingResult = null; // { teamAId, scoreA, teamBId, scoreB, fixtureId|null }
 
   // ---- auth ----
   function tryUnlock(){
@@ -121,11 +154,24 @@
   }
   document.getElementById('unlockBtn').addEventListener('click', tryUnlock);
   document.getElementById('pwInput').addEventListener('keydown', e => { if(e.key==='Enter') tryUnlock(); });
+  document.getElementById('clearSessionBtn').addEventListener('click', () => {
+    sessionStorage.removeItem(ADMIN_SESSION_KEY);
+    location.reload();
+  });
 
   if(sessionStorage.getItem(ADMIN_SESSION_KEY) === '1'){
-    lockScreen.style.display = 'none';
-    adminWrap.style.display = 'block';
-    loadAndRender();
+    try{
+      lockScreen.style.display = 'none';
+      adminWrap.style.display = 'block';
+      loadAndRender();
+    }catch(e){
+      // If anything goes wrong restoring a previous session, fall back to
+      // the password screen instead of leaving a broken blank page.
+      console.error('Auto-unlock failed, showing password screen instead:', e);
+      sessionStorage.removeItem(ADMIN_SESSION_KEY);
+      lockScreen.style.display = 'block';
+      adminWrap.style.display = 'none';
+    }
   }
 
   function showStatus(msg, isError){
@@ -135,7 +181,6 @@
     if(!isError){
       showStatus._t = setTimeout(() => { if(statusEl.textContent === msg) statusEl.textContent = ''; }, 2500);
     }
-    // error messages stay visible until the next status update, so they're never missed
   }
 
   // ---- load + save ----
@@ -143,7 +188,7 @@
     document.getElementById('subLine').textContent = 'Loading…';
     try{
       data = await fetchData();
-      document.getElementById('announceInput').value = data.announcement || '';
+      document.getElementById('aboutInput').value = data.about || '';
       document.getElementById('subLine').textContent = 'Changes save automatically';
       renderAll();
     }catch(e){
@@ -152,9 +197,6 @@
     }
   }
 
-  // Returns true on success, false on failure.
-  // On failure, does NOT re-render — so open forms (like an edit-result box) stay open
-  // and whatever you typed isn't silently thrown away.
   async function saveAndRender(){
     isSaving = true;
     document.getElementById('subLine').textContent = 'Saving…';
@@ -165,343 +207,4 @@
     }catch(e){
       ok = false;
       document.getElementById('subLine').textContent = 'Save failed — see message below';
-      showStatus('Save failed: ' + (e.message || 'unknown error') + '. Your change was NOT saved — try again.', true);
-      console.error(e);
-    }finally{
-      isSaving = false;
-    }
-    if(ok) renderAll();
-    return ok;
-  }
-
-  function badgeHTML(team, size){
-    if(team.logo){
-      return `<img class="badge" style="width:${size}px;height:${size}px;" src="${team.logo}" alt="">`;
-    }
-    const initials = team.name.split(' ').map(w => w[0]).slice(0,2).join('').toUpperCase();
-    return `<div class="badge-fallback" style="width:${size}px;height:${size}px;">${initials}</div>`;
-  }
-
-  // ---- render ----
-  function renderAll(){
-    renderTable();
-    renderMatchForm();
-    renderMatchHistory();
-    renderTeamList();
-  }
-
-  function renderTable(){
-    const sorted = sortTeams(data.teams);
-    const body = document.getElementById('tableBody');
-    body.innerHTML = '';
-    if(sorted.length === 0){
-      body.innerHTML = '<div class="empty-state">No teams yet — add one below.</div>';
-      return;
-    }
-    sorted.forEach((t, i) => {
-      const row = document.createElement('div');
-      row.className = 'row';
-      row.innerHTML = `
-        <div class="pos">${i+1}</div>
-        <div class="team-cell">
-          ${badgeHTML(t, 26)}
-          <div class="team-name"></div>
-        </div>
-        <div class="wdl">${t.played}</div>
-        <div class="wdl">${t.w}</div>
-        <div class="wdl">${t.d}</div>
-        <div class="wdl">${t.l}</div>
-        <div class="wdl">${t.gf}</div>
-        <div class="wdl">${t.ga}</div>
-        <div class="wdl">${t.gf - t.ga > 0 ? '+' : ''}${t.gf - t.ga}</div>
-        <div class="pts">${t.pts}</div>
-      `;
-      row.querySelector('.team-name').textContent = t.name;
-      body.appendChild(row);
-    });
-  }
-
-  function renderMatchForm(){
-    const box = document.getElementById('matchFormBox');
-    if(data.teams.length < 2){
-      box.innerHTML = '<div class="empty-state-small">Add at least 2 teams first.</div>';
-      return;
-    }
-    const options = data.teams.map(t => `<option value="${t.id}">${escapeHTML(t.name)}</option>`).join('');
-    box.innerHTML = `
-      <div class="match-row">
-        <select id="teamA">${options}</select>
-        <input type="number" id="scoreA" min="0" value="0" inputmode="numeric">
-        <span class="vs">–</span>
-        <input type="number" id="scoreB" min="0" value="0" inputmode="numeric">
-        <select id="teamB">${options}</select>
-      </div>
-      <button class="btn-primary" id="saveMatchBtn">Save result</button>
-    `;
-    if(data.teams.length > 1) document.getElementById('teamB').selectedIndex = 1;
-
-    document.getElementById('saveMatchBtn').addEventListener('click', async () => {
-      const teamAId = document.getElementById('teamA').value;
-      const teamBId = document.getElementById('teamB').value;
-      const scoreA = parseInt(document.getElementById('scoreA').value, 10) || 0;
-      const scoreB = parseInt(document.getElementById('scoreB').value, 10) || 0;
-      if(teamAId === teamBId){
-        showStatus('Pick two different clubs', true);
-        return;
-      }
-      recordResult(data, teamAId, scoreA, teamBId, scoreB);
-      const ok = await saveAndRender();
-      if(ok) showStatus('Result saved — table updated', false);
-    });
-  }
-
-  function escapeHTML(str){
-    const div = document.createElement('div');
-    div.textContent = str;
-    return div.innerHTML;
-  }
-
-  function renderMatchHistory(){
-    const box = document.getElementById('matchHistoryBox');
-    box.innerHTML = '';
-
-    if(data.matches.length === 0){
-      box.innerHTML = '<div class="empty-state-small">No results logged yet.</div>';
-      return;
-    }
-
-    const teamMap = Object.fromEntries(data.teams.map(t => [t.id, t]));
-
-    data.matches.slice(0, 20).forEach(m => {
-      const a = teamMap[m.teamAId];
-      const b = teamMap[m.teamBId];
-      if(!a || !b) return;
-
-      const card = document.createElement('div');
-      card.className = 'match-card-admin';
-      card.innerHTML = `
-        <div class="match-row-display">
-          <div class="match-team">
-            ${badgeHTML(a, 20)}
-            <span class="match-team-name" data-role="nameA"></span>
-          </div>
-          <div class="match-score">${m.scoreA} – ${m.scoreB}</div>
-          <div class="match-team right">
-            <span class="match-team-name" data-role="nameB" style="text-align:right;"></span>
-            ${badgeHTML(b, 20)}
-          </div>
-        </div>
-        <div class="match-time-row">
-          <span class="match-time" style="margin:0;">${timeAgo(m.ts)}</span>
-          <button class="btn-edit-match" data-edit="${m.id}">Edit</button>
-        </div>
-        <div class="match-edit-form" data-form-for="${m.id}" style="display:none;"></div>
-      `;
-      card.querySelector('[data-role="nameA"]').textContent = a.name;
-      card.querySelector('[data-role="nameB"]').textContent = b.name;
-      box.appendChild(card);
-
-      card.querySelector('.btn-edit-match').addEventListener('click', () => {
-        const form = card.querySelector('.match-edit-form');
-        const isOpen = form.style.display !== 'none';
-        if(isOpen){
-          form.style.display = 'none';
-          return;
-        }
-        form.style.display = 'grid';
-        form.innerHTML = `
-          <span style="font-size:11.5px; color:var(--chalk-dim); align-self:center;">${escapeHTML(a.name)}</span>
-          <input type="number" min="0" value="${m.scoreA}" data-role="editScoreA">
-          <span class="vs">–</span>
-          <input type="number" min="0" value="${m.scoreB}" data-role="editScoreB">
-          <button class="btn-primary" data-role="saveEdit">Save</button>
-        `;
-        form.querySelector('[data-role="saveEdit"]').addEventListener('click', async () => {
-          const newA = parseInt(form.querySelector('[data-role="editScoreA"]').value, 10) || 0;
-          const newB = parseInt(form.querySelector('[data-role="editScoreB"]').value, 10) || 0;
-          editMatchResult(data, m.id, newA, newB);
-          const ok = await saveAndRender();
-          if(ok) showStatus('Result updated', false);
-        });
-      });
-    });
-  }
-
-  function renderTeamList(){
-    const box = document.getElementById('teamListBox');
-    box.innerHTML = '';
-    if(data.teams.length === 0){
-      box.innerHTML = '<div class="empty-state-small">No teams yet — add one above.</div>';
-      return;
-    }
-    data.teams.forEach(t => {
-      const item = document.createElement('div');
-      item.className = 'team-list-item';
-      item.setAttribute('data-team-item', t.id);
-      item.innerHTML = `
-        <button class="logo-button" data-id="${t.id}" title="Upload logo">
-          ${badgeHTML(t, 38)}
-          <span class="logo-overlay">✎</span>
-        </button>
-        <input type="file" accept="image/*" style="display:none;" data-file-for="${t.id}">
-        <span class="team-list-name" data-display-for="${t.id}"></span>
-        <div class="name-edit-row" data-edit-for="${t.id}" style="display:none;"></div>
-        <button class="btn-edit-name" data-edit-name="${t.id}">Edit</button>
-        <button class="btn-remove" data-remove="${t.id}">Remove</button>
-      `;
-      item.querySelector('.team-list-name').textContent = t.name;
-      box.appendChild(item);
-    });
-
-    // logo upload (compressed client-side so many logos fit in storage)
-    box.querySelectorAll('.logo-button').forEach(btn => {
-      btn.addEventListener('click', () => {
-        const id = btn.getAttribute('data-id');
-        box.querySelector(`input[data-file-for="${id}"]`).click();
-      });
-    });
-
-    box.querySelectorAll('input[type=file]').forEach(input => {
-      input.addEventListener('change', async (e) => {
-        const id = input.getAttribute('data-file-for');
-        const file = e.target.files[0];
-        if(!file) return;
-        if(!file.type.startsWith('image/')){ showStatus('Pick an image file', true); return; }
-        if(file.size > 8 * 1024 * 1024){ showStatus('Image too large (max 8MB)', true); return; }
-        try{
-          showStatus('Processing logo…', false);
-          const compressed = await compressImageToSquare(file, 128, 0.82);
-          setTeamLogo(data, id, compressed);
-          const ok = await saveAndRender();
-          if(ok) showStatus('Logo updated', false);
-        }catch(err){
-          console.error(err);
-          showStatus('Could not process that image — try another', true);
-        }
-        input.value = '';
-      });
-    });
-
-    // inline name editing
-    box.querySelectorAll('.btn-edit-name').forEach(btn => {
-      btn.addEventListener('click', () => {
-        const id = btn.getAttribute('data-edit-name');
-        const item = box.querySelector(`[data-team-item="${id}"]`);
-        const display = item.querySelector(`[data-display-for="${id}"]`);
-        const editRow = item.querySelector(`[data-edit-for="${id}"]`);
-        const team = data.teams.find(x => x.id === id);
-        const isOpen = editRow.style.display !== 'none';
-
-        if(isOpen){
-          editRow.style.display = 'none';
-          display.style.display = '';
-          btn.textContent = 'Edit';
-          return;
-        }
-
-        display.style.display = 'none';
-        editRow.style.display = 'flex';
-        btn.textContent = 'Cancel';
-        editRow.innerHTML = `
-          <input type="text" value="${escapeHTML(team.name)}" data-role="nameInput">
-          <button class="btn-primary" data-role="saveName">Save</button>
-        `;
-        const nameInput = editRow.querySelector('[data-role="nameInput"]');
-        nameInput.focus();
-        nameInput.select();
-
-        editRow.querySelector('[data-role="saveName"]').addEventListener('click', async () => {
-          const newName = nameInput.value.trim();
-          if(!newName){ showStatus('Name cannot be empty', true); return; }
-          const ok1 = editTeamName(data, id, newName);
-          if(!ok1){ showStatus('Another team already has that name', true); return; }
-          const ok2 = await saveAndRender();
-          if(ok2) showStatus('Team name updated', false);
-        });
-        nameInput.addEventListener('keydown', e => {
-          if(e.key === 'Enter') editRow.querySelector('[data-role="saveName"]').click();
-        });
-      });
-    });
-
-    box.querySelectorAll('.btn-remove').forEach(btn => {
-      btn.addEventListener('click', async () => {
-        const id = btn.getAttribute('data-remove');
-        const team = data.teams.find(t => t.id === id);
-        if(!team) return;
-        if(!confirm(`Remove ${team.name}? This deletes their record and match history.`)) return;
-        removeTeam(data, id);
-        const ok = await saveAndRender();
-        if(ok) showStatus(`${team.name} removed`, false);
-      });
-    });
-  }
-
-  // Compress + crop any uploaded image into a square JPEG data URL.
-  // Keeps every logo small (a few KB) so JSONBin's size limit never blocks a save.
-  function compressImageToSquare(file, targetSize, quality){
-    return new Promise((resolve, reject) => {
-      const img = new Image();
-      const reader = new FileReader();
-      reader.onerror = () => reject(new Error('Could not read file'));
-      reader.onload = () => {
-        img.onerror = () => reject(new Error('Could not decode image'));
-        img.onload = () => {
-          const side = Math.min(img.width, img.height);
-          const sx = (img.width - side) / 2;
-          const sy = (img.height - side) / 2;
-
-          const canvas = document.createElement('canvas');
-          canvas.width = targetSize;
-          canvas.height = targetSize;
-          const ctx = canvas.getContext('2d');
-          ctx.drawImage(img, sx, sy, side, side, 0, 0, targetSize, targetSize);
-
-          resolve(canvas.toDataURL('image/jpeg', quality));
-        };
-        img.src = reader.result;
-      };
-      reader.readAsDataURL(file);
-    });
-  }
-
-  // ---- add team ----
-  document.getElementById('addTeamBtn').addEventListener('click', async () => {
-    const input = document.getElementById('newTeamName');
-    const name = input.value.trim();
-    if(!name){ showStatus('Enter a team name', true); return; }
-    const added = addTeam(data, name);
-    if(!added){ showStatus('Team already exists', true); return; }
-    input.value = '';
-    const ok = await saveAndRender();
-    if(ok) showStatus(`${name} added`, false);
-  });
-  document.getElementById('newTeamName').addEventListener('keydown', e => {
-    if(e.key === 'Enter') document.getElementById('addTeamBtn').click();
-  });
-
-  // ---- announcement ----
-  document.getElementById('saveAnnounceBtn').addEventListener('click', async () => {
-    data.announcement = document.getElementById('announceInput').value;
-    const ok = await saveAndRender();
-    if(ok) showStatus('Announcement updated', false);
-  });
-
-  // ---- danger zone ----
-  document.getElementById('resetBtn').addEventListener('click', async () => {
-    if(!confirm('Reset every team back to 0 points? Match history will be cleared.')) return;
-    resetSeason(data);
-    const ok = await saveAndRender();
-    if(ok) showStatus('Season reset', false);
-  });
-
-  document.getElementById('clearAllBtn').addEventListener('click', async () => {
-    if(!confirm('Clear ALL teams and match history? This cannot be undone.')) return;
-    clearAllTeams(data);
-    const ok = await saveAndRender();
-    if(ok) showStatus('All teams cleared', false);
-  });
-</script>
-
-</body>
-</html>
+      showStatus('Save failed: ' + (e.message || 'unknown error') + '. Your change was N
