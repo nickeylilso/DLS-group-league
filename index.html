@@ -3,47 +3,123 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>DLS Group Rankings</title>
+<title>DLS Championship</title>
 <link rel="stylesheet" href="style.css">
 </head>
 <body>
 
 <div class="wrap">
-  <header>
-    <div class="kicker">Season 01 · Matchday Table</div>
-    <h1>DLS Group Rankings</h1>
-    <div class="sub" id="subLine">Live table · updates automatically</div>
-  </header>
 
-  <div id="announcementBox"></div>
-
-  <div class="table-card">
-    <div class="thead">
-      <span>#</span>
-      <span>Club</span>
-      <span>MP</span>
-      <span>W</span>
-      <span>D</span>
-      <span>L</span>
-      <span>GF</span>
-      <span>GA</span>
-      <span>GD</span>
-      <span>Pts</span>
+  <!-- ===== HERO HEADER ===== -->
+  <div class="hero">
+    <div class="hero-overlay"></div>
+    <button class="menu-btn" id="menuBtn" aria-label="Menu">
+      <span></span><span></span><span></span>
+    </button>
+    <div class="hero-content">
+      <div class="hero-trophy">🏆</div>
+      <div class="kicker">DLS Championship</div>
+      <h1 class="hero-title">Welcome to the Official<br>DLS Championship</h1>
+      <p class="hero-sub">Follow Announcements, Live Standings, Fixtures, and Results.</p>
     </div>
-    <div id="tableBody"></div>
   </div>
 
-  <div id="matchFeedBox"></div>
+  <!-- ===== SLIDE-OUT MENU ===== -->
+  <div class="menu-overlay" id="menuOverlay"></div>
+  <div class="menu-panel" id="menuPanel">
+    <div class="menu-header">
+      <span class="kicker">Menu</span>
+      <button class="menu-close" id="menuClose">✕</button>
+    </div>
+    <button class="menu-item" id="menuTeams">
+      <span class="menu-item-icon">👥</span> Teams
+    </button>
+    <button class="menu-item" id="menuAnnouncements">
+      <span class="menu-item-icon">📣</span> Announcements
+    </button>
+    <button class="menu-item" id="menuAbout">
+      <span class="menu-item-icon">ℹ️</span> About Us
+    </button>
+    <button class="menu-item" id="menuAdmin">
+      <span class="menu-item-icon">🔐</span> Admin Login
+    </button>
+  </div>
+
+  <!-- ===== TEAMS PICKER MODAL ===== -->
+  <div class="modal-overlay" id="teamsModalOverlay">
+    <div class="modal-card">
+      <div class="modal-header">
+        <span class="panel-title">Teams</span>
+        <button class="menu-close" id="teamsModalClose">✕</button>
+      </div>
+      <div class="panel-hint">Tap a team to view their full stats.</div>
+      <div id="teamsModalList"></div>
+    </div>
+  </div>
+
+  <!-- ===== ANNOUNCEMENTS MODAL ===== -->
+  <div class="modal-overlay" id="announceModalOverlay">
+    <div class="modal-card">
+      <div class="modal-header">
+        <span class="panel-title">Announcements</span>
+        <button class="menu-close" id="announceModalClose">✕</button>
+      </div>
+      <div id="announceModalList"></div>
+    </div>
+  </div>
+
+  <!-- ===== ABOUT MODAL ===== -->
+  <div class="modal-overlay" id="aboutModalOverlay">
+    <div class="modal-card">
+      <div class="modal-header">
+        <span class="panel-title">About Us</span>
+        <button class="menu-close" id="aboutModalClose">✕</button>
+      </div>
+      <div id="aboutModalText" class="about-text"></div>
+    </div>
+  </div>
+
+  <div class="content-pad">
+
+    <!-- ===== FIXTURES ===== -->
+    <div id="fixturesBox"></div>
+
+    <!-- ===== STANDINGS ===== -->
+    <div class="section-heading">
+      <div class="kicker">Season 01 · Matchday Table</div>
+      <div class="sub" id="subLine">Live table · updates automatically</div>
+    </div>
+
+    <div class="table-card">
+      <div class="thead">
+        <span>#</span>
+        <span>Club</span>
+        <span>MP</span>
+        <span>W</span>
+        <span>D</span>
+        <span>L</span>
+        <span>GF</span>
+        <span>GA</span>
+        <span>GD</span>
+        <span>Pts</span>
+      </div>
+      <div id="tableBody"></div>
+    </div>
+
+    <!-- ===== TOP SCORERS ===== -->
+    <div id="topScorersBox"></div>
+
+  </div>
 
   <footer>
-    <div>DLS GROUP RANKINGS · VIEW ONLY</div>
-    <a class="admin-link" href="admin.html">Admin login →</a>
+    <div>DLS CHAMPIONSHIP · VIEW ONLY</div>
   </footer>
 </div>
 
 <script src="data.js"></script>
 <script>
   const REFRESH_MS = 6000;
+  let currentData = null;
 
   function badgeHTML(team, size){
     if(team.logo){
@@ -53,21 +129,70 @@
     return `<div class="badge-fallback" style="width:${size}px;height:${size}px;">${initials}</div>`;
   }
 
-  function renderAnnouncement(data){
-    const box = document.getElementById('announcementBox');
-    if(!data.announcement){
+  function formHTML(team){
+    if(!team.form || team.form.length === 0) return '';
+    const chips = team.form.map(r => {
+      const cls = r === 'W' ? 'form-w' : r === 'D' ? 'form-d' : 'form-l';
+      return `<span class="form-chip ${cls}">${r}</span>`;
+    }).join('');
+    return `<div class="form-strip">${chips}</div>`;
+  }
+
+  // ---- FIXTURES ----
+  function renderFixtures(data){
+    const box = document.getElementById('fixturesBox');
+    if(data.fixtures.length === 0){
       box.innerHTML = '';
       return;
     }
+    const teamMap = Object.fromEntries(data.teams.map(t => [t.id, t]));
+    const cards = data.fixtures.map(f => {
+      const a = teamMap[f.teamAId];
+      const b = teamMap[f.teamBId];
+      if(!a || !b) return '';
+      return `
+        <div class="fixture-card">
+          ${f.matchday ? `<div class="fixture-matchday">MATCHDAY ${f.matchday}</div>` : ''}
+          <div class="fixture-row">
+            <div class="fixture-team">
+              ${badgeHTML(a, 28)}
+              <span class="fixture-team-name" data-fx-name="a"></span>
+            </div>
+            <div class="fixture-vs">VS</div>
+            <div class="fixture-team right">
+              <span class="fixture-team-name" data-fx-name="b" style="text-align:right;"></span>
+              ${badgeHTML(b, 28)}
+            </div>
+          </div>
+          <div class="fixture-time">${formatKickoff(f.kickoff)}</div>
+        </div>
+      `;
+    }).join('');
+
     box.innerHTML = `
-      <div class="announcement">
-        <div class="announcement-label">📣 Announcement</div>
-        <div class="announcement-text"></div>
+      <div class="section-heading">
+        <div class="kicker">Upcoming</div>
+        <div class="sub">Fixtures</div>
       </div>
+      <div id="fixtureCardsWrap"></div>
     `;
-    box.querySelector('.announcement-text').textContent = data.announcement;
+    document.getElementById('fixtureCardsWrap').innerHTML = cards;
+
+    let idx = 0;
+    data.fixtures.forEach(f => {
+      const a = teamMap[f.teamAId];
+      const b = teamMap[f.teamBId];
+      if(!a || !b) return;
+      const cardEls = document.querySelectorAll('.fixture-card')[idx];
+      if(cardEls){
+        cardEls.querySelector('[data-fx-name="a"]').textContent = a.name;
+        cardEls.querySelector('[data-fx-name="b"]').textContent = b.name;
+      }
+      idx++;
+    });
   }
 
+  // ---- STANDINGS ----
   function renderTable(data){
     const sorted = sortTeams(data.teams);
     const body = document.getElementById('tableBody');
@@ -81,13 +206,15 @@
     sorted.forEach((t, i) => {
       const row = document.createElement('div');
       row.className = 'row';
+      row.style.cursor = 'pointer';
       row.innerHTML = `
         <div class="pos">${i+1}</div>
         <div class="team-cell">
           ${badgeHTML(t, 26)}
-          <div>
+          <div style="min-width:0;">
             <div class="team-name"></div>
             ${i === 0 ? '<div class="champion-tag">CHAMPION</div>' : ''}
+            ${formHTML(t)}
           </div>
         </div>
         <div class="wdl">${t.played}</div>
@@ -100,67 +227,102 @@
         <div class="pts">${t.pts}</div>
       `;
       row.querySelector('.team-name').textContent = t.name;
+      row.addEventListener('click', () => {
+        window.location.href = 'team.html?id=' + encodeURIComponent(t.id);
+      });
       body.appendChild(row);
     });
   }
 
-  function renderMatchFeed(data){
-    const box = document.getElementById('matchFeedBox');
-    if(data.matches.length === 0){
+  // ---- TOP SCORERS ----
+  function renderTopScorers(data){
+    const box = document.getElementById('topScorersBox');
+    const top = topScorers(data, 3).filter(t => t.gf > 0);
+    if(top.length === 0){
       box.innerHTML = '';
       return;
     }
-    const teamMap = Object.fromEntries(data.teams.map(t => [t.id, t]));
-    const cards = data.matches.slice(0, 12).map(m => {
-      const a = teamMap[m.teamAId];
-      const b = teamMap[m.teamBId];
-      if(!a || !b) return '';
-      return `
-        <div class="match-card">
-          <div class="match-team">
-            ${badgeHTML(a, 22)}
-            <span class="match-team-name" data-name="a"></span>
-          </div>
-          <div class="match-score">${m.scoreA} – ${m.scoreB}</div>
-          <div class="match-team right">
-            <span class="match-team-name" data-name="b" style="text-align:right;"></span>
-            ${badgeHTML(b, 22)}
-          </div>
-          <div class="match-time">${timeAgo(m.ts)}</div>
+    const medals = ['🥇','🥈','🥉'];
+    const cards = top.map((t, i) => `
+      <div class="scorer-card">
+        <div class="scorer-medal">${medals[i] || ''}</div>
+        ${badgeHTML(t, 32)}
+        <div class="scorer-info">
+          <div class="scorer-name" data-sc-name="${i}"></div>
+          <div class="scorer-goals">${t.gf} goals scored</div>
         </div>
-      `;
-    }).join('');
+      </div>
+    `).join('');
 
     box.innerHTML = `
-      <div class="panel">
-        <div class="panel-title">Recent results</div>
-        <div class="panel-hint">Latest matches, newest first.</div>
-        <div id="matchCardsWrap"></div>
+      <div class="section-heading">
+        <div class="kicker">Leaderboard</div>
+        <div class="sub">Top Scoring Teams</div>
       </div>
+      <div class="panel" id="scorerCardsWrap"></div>
     `;
-    const wrap = document.getElementById('matchCardsWrap');
-    wrap.innerHTML = cards;
-
-    let idx = 0;
-    data.matches.slice(0, 12).forEach(m => {
-      const a = teamMap[m.teamAId];
-      const b = teamMap[m.teamBId];
-      if(!a || !b) return;
-      const cardEls = wrap.querySelectorAll('.match-card')[idx];
-      if(cardEls){
-        cardEls.querySelector('[data-name="a"]').textContent = a.name;
-        cardEls.querySelector('[data-name="b"]').textContent = b.name;
-      }
-      idx++;
+    document.getElementById('scorerCardsWrap').innerHTML = cards;
+    top.forEach((t, i) => {
+      document.querySelector(`[data-sc-name="${i}"]`).textContent = t.name;
     });
   }
 
+  // ---- MENU: Teams modal ----
+  function renderTeamsModal(data){
+    const list = document.getElementById('teamsModalList');
+    if(data.teams.length === 0){
+      list.innerHTML = '<div class="empty-state-small">No teams yet.</div>';
+      return;
+    }
+    list.innerHTML = '';
+    sortTeams(data.teams).forEach(t => {
+      const item = document.createElement('button');
+      item.className = 'modal-team-item';
+      item.innerHTML = `${badgeHTML(t, 30)} <span class="modal-team-name"></span>`;
+      item.querySelector('.modal-team-name').textContent = t.name;
+      item.addEventListener('click', () => {
+        window.location.href = 'team.html?id=' + encodeURIComponent(t.id);
+      });
+      list.appendChild(item);
+    });
+  }
+
+  // ---- MENU: Announcements modal ----
+  function renderAnnouncementsModal(data){
+    const list = document.getElementById('announceModalList');
+    if(data.announcements.length === 0){
+      list.innerHTML = '<div class="empty-state-small">No announcements yet.</div>';
+      return;
+    }
+    list.innerHTML = data.announcements.map(a => `
+      <div class="announcement-item">
+        <div class="announcement-text-inner" data-a-id="${a.id}"></div>
+        <div class="announcement-time">${timeAgo(a.ts)}</div>
+      </div>
+    `).join('');
+    data.announcements.forEach(a => {
+      const el = list.querySelector(`[data-a-id="${a.id}"]`);
+      if(el) el.textContent = a.text;
+    });
+  }
+
+  // ---- MENU: About modal ----
+  function renderAboutModal(data){
+    const el = document.getElementById('aboutModalText');
+    el.textContent = data.about || 'No information added yet.';
+  }
+
+  // ---- refresh cycle ----
   async function refresh(showError){
     try{
       const data = await fetchData();
-      renderAnnouncement(data);
+      currentData = data;
+      renderFixtures(data);
       renderTable(data);
-      renderMatchFeed(data);
+      renderTopScorers(data);
+      renderTeamsModal(data);
+      renderAnnouncementsModal(data);
+      renderAboutModal(data);
       document.getElementById('subLine').textContent = 'Live table · updates automatically';
     }catch(e){
       if(showError){
@@ -172,6 +334,38 @@
 
   refresh(true);
   setInterval(() => refresh(false), REFRESH_MS);
+
+  // ---- menu open/close ----
+  const menuBtn = document.getElementById('menuBtn');
+  const menuOverlay = document.getElementById('menuOverlay');
+  const menuPanel = document.getElementById('menuPanel');
+  const menuClose = document.getElementById('menuClose');
+
+  function openMenu(){ menuOverlay.classList.add('show'); menuPanel.classList.add('show'); }
+  function closeMenu(){ menuOverlay.classList.remove('show'); menuPanel.classList.remove('show'); }
+  menuBtn.addEventListener('click', openMenu);
+  menuClose.addEventListener('click', closeMenu);
+  menuOverlay.addEventListener('click', closeMenu);
+
+  // ---- modal helpers ----
+  function openModal(id){ document.getElementById(id).classList.add('show'); }
+  function closeModal(id){ document.getElementById(id).classList.remove('show'); }
+
+  document.getElementById('menuTeams').addEventListener('click', () => { closeMenu(); openModal('teamsModalOverlay'); });
+  document.getElementById('teamsModalClose').addEventListener('click', () => closeModal('teamsModalOverlay'));
+  document.getElementById('teamsModalOverlay').addEventListener('click', (e) => { if(e.target.id === 'teamsModalOverlay') closeModal('teamsModalOverlay'); });
+
+  document.getElementById('menuAnnouncements').addEventListener('click', () => { closeMenu(); openModal('announceModalOverlay'); });
+  document.getElementById('announceModalClose').addEventListener('click', () => closeModal('announceModalOverlay'));
+  document.getElementById('announceModalOverlay').addEventListener('click', (e) => { if(e.target.id === 'announceModalOverlay') closeModal('announceModalOverlay'); });
+
+  document.getElementById('menuAbout').addEventListener('click', () => { closeMenu(); openModal('aboutModalOverlay'); });
+  document.getElementById('aboutModalClose').addEventListener('click', () => closeModal('aboutModalOverlay'));
+  document.getElementById('aboutModalOverlay').addEventListener('click', (e) => { if(e.target.id === 'aboutModalOverlay') closeModal('aboutModalOverlay'); });
+
+  document.getElementById('menuAdmin').addEventListener('click', () => {
+    window.location.href = 'admin.html';
+  });
 </script>
 
 </body>
