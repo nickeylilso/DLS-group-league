@@ -10,10 +10,10 @@ const ADMIN_SESSION_KEY = "dls_admin_unlocked_session";
 
 function emptyState() {
   return {
-    teams: [],
-    matches: [],
-    fixtures: [],
-    announcements: [],
+    teams: [],          // { id, name, logo, played, w, d, l, gf, ga, pts, form:[], history:[] }
+    matches: [],         // { id, teamAId, teamBId, scoreA, scoreB, ts, matchday }
+    fixtures: [],         // { id, teamAId, teamBId, kickoff (ISO string), matchday }
+    announcements: [],     // { id, text, ts }
     about: "",
     matchdayCounter: 1
   };
@@ -23,6 +23,7 @@ function uid() {
   return Math.random().toString(36).slice(2, 10) + Date.now().toString(36);
 }
 
+// ---- cloud read/write ----
 async function fetchData() {
   const res = await fetch(JSONBIN_BASE + "/latest", {
     method: "GET",
@@ -59,6 +60,7 @@ async function pushData(data) {
   return true;
 }
 
+// ---- table logic ----
 function sortTeams(list) {
   return [...list].sort((a, b) => {
     if (b.pts !== a.pts) return b.pts - a.pts;
@@ -73,6 +75,7 @@ function gd(team) {
   return team.gf - team.ga;
 }
 
+// ---- teams ----
 function addTeam(data, name) {
   const trimmed = (name || "").trim();
   if (!trimmed) return false;
@@ -80,8 +83,8 @@ function addTeam(data, name) {
   data.teams.push({
     id: uid(), name: trimmed, logo: null,
     played: 0, w: 0, d: 0, l: 0, gf: 0, ga: 0, pts: 0,
-    form: [],
-    history: []
+    form: [],       // array of 'W' | 'D' | 'L', most recent last
+    history: []      // array of { ts, position } snapshots for the movement graph
   });
   return true;
 }
@@ -121,6 +124,7 @@ function editTeamName(data, id, newName) {
   return true;
 }
 
+// ---- results ----
 function recordResult(data, teamAId, scoreA, teamBId, scoreB, matchday) {
   if (teamAId === teamBId) return false;
   const a = data.teams.find(t => t.id === teamAId);
@@ -132,7 +136,7 @@ function recordResult(data, teamAId, scoreA, teamBId, scoreB, matchday) {
     matchday: matchday || null
   });
   recalculateAllStats(data);
-  maybeSnapshotCompletedMatchday(data, matchday);
+  recordStandingsSnapshot(data);
   return true;
 }
 
@@ -141,38 +145,27 @@ function editMatchResult(data, matchId, newScoreA, newScoreB) {
   if (!m) return false;
   m.scoreA = newScoreA;
   m.scoreB = newScoreB;
+  // ts is untouched on purpose — editing a result must not change when it was played
   recalculateAllStats(data);
-  return true;
-}
-
-function editMatchMatchday(data, matchId, newMatchday) {
-  const m = data.matches.find(x => x.id === matchId);
-  if (!m) return false;
-  m.matchday = newMatchday || null;
-  return true;
-}
-
-function removeMatchResult(data, matchId) {
-  const idx = data.matches.findIndex(x => x.id === matchId);
-  if (idx === -1) return false;
-  data.matches.splice(idx, 1);
-  recalculateAllStats(data);
+  recordStandingsSnapshot(data);
   return true;
 }
 
 function recalculateAllStats(data) {
+  // reset every team's stats, then replay full match history to rebuild them.
   data.teams.forEach(t => {
     t.played = 0; t.w = 0; t.d = 0; t.l = 0; t.gf = 0; t.ga = 0; t.pts = 0;
     t.form = [];
   });
   const teamById = Object.fromEntries(data.teams.map(t => [t.id, t]));
 
+  // replay oldest-first so it doesn't matter that matches[] is stored newest-first
   const chronological = [...data.matches].sort((x, y) => x.ts - y.ts);
 
   chronological.forEach(m => {
     const a = teamById[m.teamAId];
     const b = teamById[m.teamBId];
-    if (!a || !b) return;
+    if (!a || !b) return; // team was removed since — skip safely
 
     a.played++; b.played++;
     a.gf += m.scoreA; a.ga += m.scoreB;
@@ -190,26 +183,20 @@ function recalculateAllStats(data) {
     }
   });
 
+  // keep only the last 5 results for the form strip
   data.teams.forEach(t => { t.form = t.form.slice(-5); });
 }
 
-// Snapshot every team's current table position, but only once a given matchday's
-// fixtures have ALL been played (i.e. no fixtures with that matchday number remain).
-// This makes the movement graph track progress by matchday, not by individual match.
-function maybeSnapshotCompletedMatchday(data, matchday) {
-  if (!matchday) return;
-  const stillPending = data.fixtures.some(f => f.matchday === matchday);
-  if (stillPending) return;
-
+// Snapshot every team's current table position, so team.html can plot movement over time.
+function recordStandingsSnapshot(data) {
   const sorted = sortTeams(data.teams);
+  const ts = Date.now();
   sorted.forEach((t, i) => {
     const team = data.teams.find(x => x.id === t.id);
     if (!team) return;
     if (!Array.isArray(team.history)) team.history = [];
-    const alreadyRecorded = team.history.some(h => h.matchday === matchday);
-    if (alreadyRecorded) return;
-    team.history.push({ matchday, position: i + 1 });
-    team.history.sort((a, b) => a.matchday - b.matchday);
+    team.history.push({ ts, position: i + 1 });
+    // cap history length so storage doesn't grow forever
     if (team.history.length > 40) team.history = team.history.slice(-40);
   });
 }
@@ -229,6 +216,7 @@ function clearAllTeams(data) {
   data.fixtures = [];
 }
 
+// ---- fixtures ----
 function addFixture(data, teamAId, teamBId, kickoffISO, matchday) {
   if (teamAId === teamBId) return false;
   const a = data.teams.find(t => t.id === teamAId);
@@ -239,6 +227,7 @@ function addFixture(data, teamAId, teamBId, kickoffISO, matchday) {
     kickoff: kickoffISO || null,
     matchday: matchday || null
   });
+  // fixtures sorted by kickoff time, undated ones last
   data.fixtures.sort((x, y) => {
     if (!x.kickoff && !y.kickoff) return 0;
     if (!x.kickoff) return 1;
@@ -269,6 +258,8 @@ function removeFixture(data, fixtureId) {
   return true;
 }
 
+// Records a result AND clears the matching fixture (if one exists) in one step —
+// this is what admin's "log result" flow should call when the result comes from a fixture.
 function recordResultAndClearFixture(data, fixtureId, scoreA, scoreB) {
   const f = data.fixtures.find(x => x.id === fixtureId);
   if (!f) return false;
@@ -278,6 +269,7 @@ function recordResultAndClearFixture(data, fixtureId, scoreA, scoreB) {
   return true;
 }
 
+// ---- announcements ----
 function addAnnouncement(data, text) {
   const trimmed = (text || "").trim();
   if (!trimmed) return false;
@@ -292,11 +284,13 @@ function removeAnnouncement(data, id) {
   return true;
 }
 
+// ---- about ----
 function setAbout(data, text) {
   data.about = text || "";
   return true;
 }
 
+// ---- derived views ----
 function topScorers(data, count) {
   return [...data.teams]
     .sort((a, b) => b.gf - a.gf)
@@ -327,4 +321,4 @@ function formatKickoff(iso) {
   const dateStr = d.toLocaleDateString(undefined, { weekday: 'short', month: 'short', day: 'numeric' });
   const timeStr = d.toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' });
   return `${dateStr} · ${timeStr}`;
-    }
+                                       }
