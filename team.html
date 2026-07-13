@@ -94,28 +94,49 @@
       return;
     }
 
-    const sortedHistory = [...history].sort((a, b) => a.matchday - b.matchday);
+    // Sort chronologically by matchday, then de-duplicate (keep the latest snapshot
+    // per matchday in case of edits), then plot by SEQUENCE — point 1, 2, 3... —
+    // rather than by raw matchday number. This guarantees even spacing even if
+    // matchdays are skipped, non-sequential, or (as a data glitch) identical.
+    const byMatchday = new Map();
+    [...history]
+      .sort((a, b) => a.matchday - b.matchday)
+      .forEach(h => byMatchday.set(h.matchday, h));
+
+    const sortedHistory = [...byMatchday.values()].sort((a, b) => a.matchday - b.matchday);
+
+    if(sortedHistory.length < 2){
+      box.innerHTML = `
+        <div class="panel">
+          <div class="panel-title">Table Movement</div>
+          <div class="panel-hint">Updates once a matchday's fixtures are all completed.</div>
+          <div class="empty-state-small">Not enough completed matchdays yet to show movement.</div>
+        </div>
+      `;
+      return;
+    }
+
     const w = 320, h = 220, padL = 34, padR = 16, padT = 16, padB = 34;
     const plotW = w - padL - padR;
     const plotH = h - padT - padB;
 
-    const positions = sortedHistory.map(h => h.position);
-    const matchdays = sortedHistory.map(h => h.matchday);
+    const positions = sortedHistory.map(pt => pt.position);
     const maxPos = Math.max(...positions, data.teams ? data.teams.length : positions.length);
     const minPos = 1;
-    const minMD = Math.min(...matchdays);
-    const maxMD = Math.max(...matchdays);
-    const mdSpan = Math.max(maxMD - minMD, 1);
+    const stepCount = sortedHistory.length - 1;
 
-    function xFor(md){ return padL + ((md - minMD) / mdSpan) * plotW; }
+    function xFor(seqIndex){
+      if(stepCount === 0) return padL + plotW / 2;
+      return padL + (seqIndex / stepCount) * plotW;
+    }
     function yFor(pos){
       if(maxPos === minPos) return padT + plotH / 2;
       return padT + ((pos - minPos) / (maxPos - minPos)) * plotH;
     }
 
-    const points = sortedHistory.map(pt => `${xFor(pt.matchday)},${yFor(pt.position)}`).join(' ');
-    const dots = sortedHistory.map(pt =>
-      `<circle cx="${xFor(pt.matchday)}" cy="${yFor(pt.position)}" r="3.5" fill="#e8b649"/>`
+    const points = sortedHistory.map((pt, i) => `${xFor(i)},${yFor(pt.position)}`).join(' ');
+    const dots = sortedHistory.map((pt, i) =>
+      `<circle cx="${xFor(i)}" cy="${yFor(pt.position)}" r="3.5" fill="#e8b649"/>`
     ).join('');
 
     const yTicks = [];
@@ -126,10 +147,9 @@
       `);
     }
 
-    const uniqueMDs = [...new Set(matchdays)];
-    const xTicks = uniqueMDs.map(md => `
-      <text x="${xFor(md)}" y="${h - padB + 16}" text-anchor="middle" font-size="9" fill="#a9bdb0" font-family="JetBrains Mono, monospace">${md}</text>
-      <line x1="${xFor(md)}" y1="${h - padB}" x2="${xFor(md)}" y2="${h - padB + 4}" stroke="#7a6532" stroke-width="1"/>
+    const xTicks = sortedHistory.map((pt, i) => `
+      <text x="${xFor(i)}" y="${h - padB + 16}" text-anchor="middle" font-size="9" fill="#a9bdb0" font-family="JetBrains Mono, monospace">${pt.matchday}</text>
+      <line x1="${xFor(i)}" y1="${h - padB}" x2="${xFor(i)}" y2="${h - padB + 4}" stroke="#7a6532" stroke-width="1"/>
     `).join('');
 
     box.innerHTML = `
