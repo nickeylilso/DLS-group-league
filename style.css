@@ -519,6 +519,9 @@ a.admin-link:hover, button.admin-link:hover{ color:var(--gold); border-color:var
   gap:6px 8px;
   margin-bottom:10px;
 }
+.match-card .fixture-matchday{
+  grid-column:1 / -1;
+}
 .match-team{ display:flex; align-items:center; gap:6px; min-width:0; }
 .match-team.right{ justify-content:flex-end; }
 .match-team-name{
@@ -543,6 +546,28 @@ a.admin-link:hover, button.admin-link:hover{ color:var(--gold); border-color:var
   color:var(--gold-dim);
   text-align:center;
   margin-top:2px;
+}
+
+/* ===== Results modal — grouped by matchday ===== */
+.results-group{ margin-bottom:22px; }
+.results-group:last-child{ margin-bottom:0; }
+.results-group-header{
+  display:flex;
+  align-items:center;
+  gap:10px;
+  margin-bottom:10px;
+}
+.results-group-title{
+  font-family:'JetBrains Mono', monospace;
+  font-size:11px;
+  letter-spacing:0.1em;
+  color:var(--gold);
+  white-space:nowrap;
+}
+.results-group-line{
+  flex:1;
+  height:1px;
+  background:var(--line);
 }
 
 /* ===== Panel (admin + team page) ===== */
@@ -879,4 +904,4 @@ footer{
   flex-direction:column;
   align-items:center;
   gap:12px;
-                  }
+  }
