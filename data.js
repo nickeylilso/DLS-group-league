@@ -315,7 +315,7 @@ function timeAgo(ts) {
 }
 
 function formatKickoff(iso) {
-  if (!iso) return "Time TBC";
+  if (!iso) return "AnyTime";
   const d = new Date(iso);
   if (isNaN(d.getTime())) return "Time TBC";
   const dateStr = d.toLocaleDateString(undefined, { weekday: 'short', month: 'short', day: 'numeric' });
