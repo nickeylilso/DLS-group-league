@@ -468,7 +468,9 @@
     });
   }
 
-  // ---- match history / edit ----
+  // ---- match history / edit (with 6-visible cap + More button) ----
+  let matchHistoryExpanded = false;
+
   function renderMatchHistory(){
     const box = document.getElementById('matchHistoryBox');
     box.innerHTML = '';
@@ -479,8 +481,27 @@
     }
 
     const teamMap = Object.fromEntries(data.teams.map(t => [t.id, t]));
+    const VISIBLE_COUNT = 6;
+    const toShow = matchHistoryExpanded ? data.matches : data.matches.slice(0, VISIBLE_COUNT);
 
-    data.matches.slice(0, 20).forEach(m => {
+    toShow.forEach(m => buildMatchHistoryCard(box, m, teamMap));
+
+    if(data.matches.length > VISIBLE_COUNT){
+      const moreBtn = document.createElement('button');
+      moreBtn.className = 'btn-ghost';
+      moreBtn.style.marginTop = '8px';
+      moreBtn.textContent = matchHistoryExpanded
+        ? 'Show less'
+        : `More (${data.matches.length - VISIBLE_COUNT} older result${data.matches.length - VISIBLE_COUNT === 1 ? '' : 's'})`;
+      moreBtn.addEventListener('click', () => {
+        matchHistoryExpanded = !matchHistoryExpanded;
+        renderMatchHistory();
+      });
+      box.appendChild(moreBtn);
+    }
+  }
+
+  function buildMatchHistoryCard(box, m, teamMap){
       const a = teamMap[m.teamAId];
       const b = teamMap[m.teamBId];
       if(!a || !b) return;
@@ -559,7 +580,6 @@
         const ok = await saveAndRender();
         if(ok) showStatus('Result removed — table updated', false);
       });
-    });
   }
 
   // ---- manage teams (logos compressed harder + removable) ----
