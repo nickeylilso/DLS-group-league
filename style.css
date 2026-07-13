@@ -155,6 +155,7 @@ a.admin-link:hover, button.admin-link:hover{ color:var(--gold); border-color:var
   display:flex;
   flex-direction:column;
   gap:8px;
+  overflow-y:auto;
 }
 .menu-panel.show{ transform:translateX(0); }
 
@@ -163,15 +164,19 @@ a.admin-link:hover, button.admin-link:hover{ color:var(--gold); border-color:var
   align-items:center;
   justify-content:space-between;
   margin-bottom:12px;
+  width:100%;
 }
 .menu-close{
   background:none;
   border:1px solid var(--line);
   color:var(--chalk-dim);
   width:32px; height:32px;
+  min-width:32px;
   border-radius:8px;
   font-size:14px;
   cursor:pointer;
+  flex:0 0 auto;
+  padding:0;
 }
 
 .menu-item{
@@ -188,6 +193,7 @@ a.admin-link:hover, button.admin-link:hover{ color:var(--gold); border-color:var
   text-align:left;
   cursor:pointer;
   width:100%;
+  flex:0 0 auto;
 }
 .menu-item:hover{ border-color:var(--gold-dim); }
 .menu-item-icon{ font-size:16px; }
@@ -751,6 +757,8 @@ button:active{ transform:scale(0.97); }
   justify-content:space-between;
   align-items:center;
   margin-top:6px;
+  flex-wrap:wrap;
+  gap:8px;
 }
 .btn-edit-match{
   background:transparent;
@@ -871,4 +879,4 @@ footer{
   flex-direction:column;
   align-items:center;
   gap:12px;
-  }
+                  }
