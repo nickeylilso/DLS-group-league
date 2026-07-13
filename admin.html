@@ -17,6 +17,7 @@
   <button class="btn-primary" id="unlockBtn">Unlock</button>
   <div class="lock-error" id="lockError"></div>
   <button class="text-link" onclick="location.href='index.html'">← Back to table</button>
+  <button class="text-link" id="clearSessionBtn" style="display:block; margin:6px auto 0;">Having trouble? Tap here to reset login</button>
 </div>
 
 <!-- CONFIRM RESULT MODAL -->
@@ -58,17 +59,10 @@
     <div id="tableBody"></div>
   </div>
 
-  <!-- Log a result -->
-  <div class="panel">
-    <div class="panel-title">Log a result</div>
-    <div class="panel-hint">Pick two clubs, enter the score, review, then publish.</div>
-    <div id="matchFormBox"></div>
-  </div>
-
   <!-- Fixtures -->
   <div class="panel">
     <div class="panel-title">Fixtures</div>
-    <div class="panel-hint">Schedule upcoming matches. They disappear automatically once a result is published.</div>
+    <div class="panel-hint">Schedule a match, then publish its result here once it's played. Results can only be entered from fixtures now.</div>
     <div id="fixtureFormBox"></div>
     <div id="fixtureListBox"></div>
   </div>
@@ -76,7 +70,7 @@
   <!-- Match history / edit results -->
   <div class="panel">
     <div class="panel-title">Recent results</div>
-    <div class="panel-hint">Tap Edit to correct a score — the date it was played won't change.</div>
+    <div class="panel-hint">Edit score, edit matchday, or remove a result — the date it was played won't change.</div>
     <div id="matchHistoryBox"></div>
   </div>
 
@@ -136,7 +130,17 @@
 
   let data = emptyState();
   let isSaving = false;
-  let pendingResult = null; // { teamAId, scoreA, teamBId, scoreB, fixtureId|null }
+  let pendingResult = null;
+
+  function safeSessionGet(key){
+    try{ return sessionStorage.getItem(key); }catch(e){ console.error('sessionStorage.getItem failed:', e); return null; }
+  }
+  function safeSessionSet(key, value){
+    try{ sessionStorage.setItem(key, value); }catch(e){ console.error('sessionStorage.setItem failed:', e); }
+  }
+  function safeSessionRemove(key){
+    try{ sessionStorage.removeItem(key); }catch(e){ console.error('sessionStorage.removeItem failed:', e); }
+  }
 
   // ---- auth ----
   function tryUnlock(){
@@ -144,7 +148,7 @@
     if(val === ADMIN_PASSWORD){
       lockScreen.style.display = 'none';
       adminWrap.style.display = 'block';
-      sessionStorage.setItem(ADMIN_SESSION_KEY, '1');
+      safeSessionSet(ADMIN_SESSION_KEY, '1');
       loadAndRender();
     } else {
       lockError.textContent = 'Wrong password — try again';
@@ -153,11 +157,22 @@
   }
   document.getElementById('unlockBtn').addEventListener('click', tryUnlock);
   document.getElementById('pwInput').addEventListener('keydown', e => { if(e.key==='Enter') tryUnlock(); });
+  document.getElementById('clearSessionBtn').addEventListener('click', () => {
+    safeSessionRemove(ADMIN_SESSION_KEY);
+    location.reload();
+  });
 
-  if(sessionStorage.getItem(ADMIN_SESSION_KEY) === '1'){
-    lockScreen.style.display = 'none';
-    adminWrap.style.display = 'block';
-    loadAndRender();
+  if(safeSessionGet(ADMIN_SESSION_KEY) === '1'){
+    try{
+      lockScreen.style.display = 'none';
+      adminWrap.style.display = 'block';
+      loadAndRender();
+    }catch(e){
+      console.error('Auto-unlock failed, showing password screen instead:', e);
+      safeSessionRemove(ADMIN_SESSION_KEY);
+      lockScreen.style.display = 'block';
+      adminWrap.style.display = 'none';
+    }
   }
 
   function showStatus(msg, isError){
@@ -218,13 +233,20 @@
 
   // ---- render ----
   function renderAll(){
-    renderTable();
-    renderMatchForm();
-    renderFixtureForm();
-    renderFixtureList();
-    renderMatchHistory();
-    renderTeamList();
-    renderAnnouncementList();
+    safeRender('table', renderTable);
+    safeRender('fixture form', renderFixtureForm);
+    safeRender('fixture list', renderFixtureList);
+    safeRender('match history', renderMatchHistory);
+    safeRender('team list', renderTeamList);
+    safeRender('announcement list', renderAnnouncementList);
+  }
+
+  function safeRender(label, fn){
+    try{
+      fn();
+    }catch(e){
+      console.error('Render failed for ' + label + ':', e);
+    }
   }
 
   function renderTable(){
@@ -258,39 +280,7 @@
     });
   }
 
-  // ---- log result (with confirmation) ----
-  function renderMatchForm(){
-    const box = document.getElementById('matchFormBox');
-    if(data.teams.length < 2){
-      box.innerHTML = '<div class="empty-state-small">Add at least 2 teams first.</div>';
-      return;
-    }
-    const options = data.teams.map(t => `<option value="${t.id}">${escapeHTML(t.name)}</option>`).join('');
-    box.innerHTML = `
-      <div class="match-row">
-        <select id="teamA">${options}</select>
-        <input type="number" id="scoreA" min="0" value="0" inputmode="numeric">
-        <span class="vs">–</span>
-        <input type="number" id="scoreB" min="0" value="0" inputmode="numeric">
-        <select id="teamB">${options}</select>
-      </div>
-      <button class="btn-primary" id="reviewMatchBtn">Review result</button>
-    `;
-    if(data.teams.length > 1) document.getElementById('teamB').selectedIndex = 1;
-
-    document.getElementById('reviewMatchBtn').addEventListener('click', () => {
-      const teamAId = document.getElementById('teamA').value;
-      const teamBId = document.getElementById('teamB').value;
-      const scoreA = parseInt(document.getElementById('scoreA').value, 10) || 0;
-      const scoreB = parseInt(document.getElementById('scoreB').value, 10) || 0;
-      if(teamAId === teamBId){
-        showStatus('Pick two different clubs', true);
-        return;
-      }
-      openConfirmModal({ teamAId, scoreA, teamBId, scoreB, fixtureId: null });
-    });
-  }
-
+  // ---- confirmation modal (used by fixture results) ----
   function openConfirmModal(result){
     pendingResult = result;
     const a = data.teams.find(t => t.id === result.teamAId);
@@ -342,8 +332,6 @@
     document.getElementById('confirmModalOverlay').classList.remove('show');
     pendingResult = null;
     if(saved){
-      document.getElementById('scoreA') && (document.getElementById('scoreA').value = 0);
-      document.getElementById('scoreB') && (document.getElementById('scoreB').value = 0);
       showStatus('Result published — table updated', false);
     }
   });
@@ -513,16 +501,21 @@
         </div>
         <div class="match-time-row">
           <span class="match-time" style="margin:0;">${timeAgo(m.ts)}${m.matchday ? ' · MD' + m.matchday : ''}</span>
-          <button class="btn-edit-match" data-edit="${m.id}">Edit</button>
+          <div style="display:flex; gap:6px;">
+            <button class="btn-edit-match" data-edit-md="${m.id}">Matchday</button>
+            <button class="btn-edit-match" data-edit="${m.id}">Edit score</button>
+            <button class="btn-remove" data-remove-match="${m.id}">Remove</button>
+          </div>
         </div>
         <div class="match-edit-form" data-form-for="${m.id}" style="display:none;"></div>
+        <div class="match-edit-form" data-md-form-for="${m.id}" style="display:none;"></div>
       `;
       card.querySelector('[data-role="nameA"]').textContent = a.name;
       card.querySelector('[data-role="nameB"]').textContent = b.name;
       box.appendChild(card);
 
-      card.querySelector('.btn-edit-match').addEventListener('click', () => {
-        const form = card.querySelector('.match-edit-form');
+      card.querySelector('[data-edit]').addEventListener('click', () => {
+        const form = card.querySelector('[data-form-for]');
         const isOpen = form.style.display !== 'none';
         if(isOpen){ form.style.display = 'none'; return; }
         form.style.display = 'grid';
@@ -540,6 +533,31 @@
           const ok = await saveAndRender();
           if(ok) showStatus('Result updated', false);
         });
+      });
+
+      card.querySelector('[data-edit-md]').addEventListener('click', () => {
+        const form = card.querySelector('[data-md-form-for]');
+        const isOpen = form.style.display !== 'none';
+        if(isOpen){ form.style.display = 'none'; return; }
+        form.style.display = 'flex';
+        form.style.gap = '8px';
+        form.innerHTML = `
+          <input type="number" min="1" value="${m.matchday || ''}" placeholder="Matchday #" data-role="editMatchday" style="flex:1;">
+          <button class="btn-primary" data-role="saveMatchday" style="flex:0 0 auto; width:auto; padding:8px 16px;">Save</button>
+        `;
+        form.querySelector('[data-role="saveMatchday"]').addEventListener('click', async () => {
+          const newMD = parseInt(form.querySelector('[data-role="editMatchday"]').value, 10) || null;
+          editMatchMatchday(data, m.id, newMD);
+          const ok = await saveAndRender();
+          if(ok) showStatus('Matchday updated', false);
+        });
+      });
+
+      card.querySelector('[data-remove-match]').addEventListener('click', async () => {
+        if(!confirm(`Remove this result (${a.name} ${m.scoreA} – ${m.scoreB} ${b.name})? This will recalculate the table.`)) return;
+        removeMatchResult(data, m.id);
+        const ok = await saveAndRender();
+        if(ok) showStatus('Result removed — table updated', false);
       });
     });
   }
@@ -767,4 +785,4 @@
 </script>
 
 </body>
-</html>
+  </html>
