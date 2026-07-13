@@ -80,39 +80,69 @@
     `;
   }
 
-  function renderGraph(team){
+  function renderGraph(data, team){
     const box = document.getElementById('teamGraphBox');
     const history = team.history || [];
     if(history.length < 2){
       box.innerHTML = `
         <div class="panel">
           <div class="panel-title">Table Movement</div>
-          <div class="empty-state-small">Not enough match data yet to show movement over time.</div>
+          <div class="panel-hint">Updates once a matchday's fixtures are all completed.</div>
+          <div class="empty-state-small">Not enough completed matchdays yet to show movement.</div>
         </div>
       `;
       return;
     }
 
-    const w = 300, h = 120, pad = 20;
-    const positions = history.map(h => h.position);
-    const maxPos = Math.max(...positions, 1);
-    const minPos = 1;
-    const stepX = (w - pad * 2) / (history.length - 1);
+    const sortedHistory = [...history].sort((a, b) => a.matchday - b.matchday);
+    const w = 320, h = 220, padL = 34, padR = 16, padT = 16, padB = 34;
+    const plotW = w - padL - padR;
+    const plotH = h - padT - padB;
 
-    function xFor(i){ return pad + i * stepX; }
+    const positions = sortedHistory.map(h => h.position);
+    const matchdays = sortedHistory.map(h => h.matchday);
+    const maxPos = Math.max(...positions, data.teams ? data.teams.length : positions.length);
+    const minPos = 1;
+    const minMD = Math.min(...matchdays);
+    const maxMD = Math.max(...matchdays);
+    const mdSpan = Math.max(maxMD - minMD, 1);
+
+    function xFor(md){ return padL + ((md - minMD) / mdSpan) * plotW; }
     function yFor(pos){
-      if(maxPos === minPos) return h / 2;
-      return pad + ((pos - minPos) / (maxPos - minPos)) * (h - pad * 2);
+      if(maxPos === minPos) return padT + plotH / 2;
+      return padT + ((pos - minPos) / (maxPos - minPos)) * plotH;
     }
 
-    const points = history.map((pt, i) => `${xFor(i)},${yFor(pt.position)}`).join(' ');
-    const dots = history.map((pt, i) => `<circle cx="${xFor(i)}" cy="${yFor(pt.position)}" r="3" fill="#e8b649"/>`).join('');
+    const points = sortedHistory.map(pt => `${xFor(pt.matchday)},${yFor(pt.position)}`).join(' ');
+    const dots = sortedHistory.map(pt =>
+      `<circle cx="${xFor(pt.matchday)}" cy="${yFor(pt.position)}" r="3.5" fill="#e8b649"/>`
+    ).join('');
+
+    const yTicks = [];
+    for(let p = 1; p <= maxPos; p++){
+      yTicks.push(`
+        <text x="${padL - 8}" y="${yFor(p) + 3}" text-anchor="end" font-size="9" fill="#a9bdb0" font-family="JetBrains Mono, monospace">${p}</text>
+        <line x1="${padL - 4}" y1="${yFor(p)}" x2="${padL}" y2="${yFor(p)}" stroke="#7a6532" stroke-width="1"/>
+      `);
+    }
+
+    const uniqueMDs = [...new Set(matchdays)];
+    const xTicks = uniqueMDs.map(md => `
+      <text x="${xFor(md)}" y="${h - padB + 16}" text-anchor="middle" font-size="9" fill="#a9bdb0" font-family="JetBrains Mono, monospace">${md}</text>
+      <line x1="${xFor(md)}" y1="${h - padB}" x2="${xFor(md)}" y2="${h - padB + 4}" stroke="#7a6532" stroke-width="1"/>
+    `).join('');
 
     box.innerHTML = `
       <div class="panel">
         <div class="panel-title">Table Movement</div>
-        <div class="panel-hint">Table position after each match (lower is better).</div>
+        <div class="panel-hint">Position after each completed matchday (lower is better).</div>
         <svg viewBox="0 0 ${w} ${h}" class="movement-graph">
+          <line x1="${padL}" y1="${padT}" x2="${padL}" y2="${h - padB}" stroke="#1c4530" stroke-width="1.5"/>
+          <line x1="${padL}" y1="${h - padB}" x2="${w - padR}" y2="${h - padB}" stroke="#1c4530" stroke-width="1.5"/>
+          <text x="${padL - 26}" y="${padT + plotH/2}" text-anchor="middle" font-size="9" fill="#7a6532" font-family="JetBrains Mono, monospace" transform="rotate(-90 ${padL - 26} ${padT + plotH/2})">STANDINGS</text>
+          <text x="${padL + plotW/2}" y="${h - 4}" text-anchor="middle" font-size="9" fill="#7a6532" font-family="JetBrains Mono, monospace">MATCH DAYS</text>
+          ${yTicks.join('')}
+          ${xTicks}
           <polyline points="${points}" fill="none" stroke="#e8b649" stroke-width="2"/>
           ${dots}
         </svg>
@@ -221,7 +251,7 @@
 
       renderHeader(team, position);
       renderStats(team);
-      renderGraph(team);
+      renderGraph(data, team);
       renderFixtures(data, team);
       renderMatches(data, team);
     }catch(e){
