@@ -55,7 +55,7 @@
         <span class="panel-title">Results</span>
         <button class="menu-close" id="resultsModalClose">✕</button>
       </div>
-      <div class="panel-hint">All published results, newest first.</div>
+      <div class="panel-hint">All published results, grouped by matchday.</div>
       <div id="resultsModalList"></div>
     </div>
   </div>
@@ -305,13 +305,43 @@
       return;
     }
     const teamMap = Object.fromEntries(data.teams.map(t => [t.id, t]));
-    const cards = data.matches.map(m => {
-      const a = teamMap[m.teamAId];
-      const b = teamMap[m.teamBId];
-      if(!a || !b) return '';
-      return `
-        <div class="match-card">
-          ${m.matchday ? `<div class="fixture-matchday">MATCHDAY ${m.matchday}</div>` : ''}
+
+    // group matches by matchday (matches with no matchday go in an "Other" bucket at the end)
+    const groups = new Map();
+    data.matches.forEach(m => {
+      const key = m.matchday || 'other';
+      if(!groups.has(key)) groups.set(key, []);
+      groups.get(key).push(m);
+    });
+
+    // sort group keys: numeric matchdays descending (newest first), 'other' last
+    const sortedKeys = [...groups.keys()].sort((x, y) => {
+      if(x === 'other') return 1;
+      if(y === 'other') return -1;
+      return y - x;
+    });
+
+    list.innerHTML = '';
+    sortedKeys.forEach(key => {
+      const groupEl = document.createElement('div');
+      groupEl.className = 'results-group';
+
+      const header = document.createElement('div');
+      header.className = 'results-group-header';
+      header.innerHTML = `
+        <span class="results-group-title">${key === 'other' ? 'OTHER RESULTS' : 'MATCHDAY ' + key}</span>
+        <span class="results-group-line"></span>
+      `;
+      groupEl.appendChild(header);
+
+      groups.get(key).forEach(m => {
+        const a = teamMap[m.teamAId];
+        const b = teamMap[m.teamBId];
+        if(!a || !b) return;
+
+        const card = document.createElement('div');
+        card.className = 'match-card';
+        card.innerHTML = `
           <div class="match-team">
             ${badgeHTML(a, 22)}
             <span class="match-team-name" data-r-name="a"></span>
@@ -322,22 +352,13 @@
             ${badgeHTML(b, 22)}
           </div>
           <div class="match-time">${timeAgo(m.ts)}</div>
-        </div>
-      `;
-    }).join('');
-    list.innerHTML = cards;
+        `;
+        card.querySelector('[data-r-name="a"]').textContent = a.name;
+        card.querySelector('[data-r-name="b"]').textContent = b.name;
+        groupEl.appendChild(card);
+      });
 
-    let idx = 0;
-    data.matches.forEach(m => {
-      const a = teamMap[m.teamAId];
-      const b = teamMap[m.teamBId];
-      if(!a || !b) return;
-      const cardEls = list.querySelectorAll('.match-card')[idx];
-      if(cardEls){
-        cardEls.querySelector('[data-r-name="a"]').textContent = a.name;
-        cardEls.querySelector('[data-r-name="b"]').textContent = b.name;
-      }
-      idx++;
+      list.appendChild(groupEl);
     });
   }
 
