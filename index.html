@@ -34,6 +34,9 @@
     <button class="menu-item" id="menuTeams">
       <span class="menu-item-icon">👥</span> Teams
     </button>
+    <button class="menu-item" id="menuResults">
+      <span class="menu-item-icon">⚽</span> Results
+    </button>
     <button class="menu-item" id="menuAnnouncements">
       <span class="menu-item-icon">📣</span> Announcements
     </button>
@@ -43,6 +46,18 @@
     <button class="menu-item" id="menuAdmin">
       <span class="menu-item-icon">🔐</span> Admin Login
     </button>
+  </div>
+
+  <!-- ===== RESULTS MODAL ===== -->
+  <div class="modal-overlay" id="resultsModalOverlay">
+    <div class="modal-card">
+      <div class="modal-header">
+        <span class="panel-title">Results</span>
+        <button class="menu-close" id="resultsModalClose">✕</button>
+      </div>
+      <div class="panel-hint">All published results, newest first.</div>
+      <div id="resultsModalList"></div>
+    </div>
   </div>
 
   <!-- ===== TEAMS PICKER MODAL ===== -->
@@ -86,8 +101,8 @@
 
     <!-- ===== STANDINGS ===== -->
     <div class="section-heading">
-      <div class="kicker">Season 01 · Standings</div>
-      <div class="sub" id="subLine"View Your Teams Standing Here</div>
+      <div class="kicker">Season 01 · Matchday Table</div>
+      <div class="sub" id="subLine">Live table · updates automatically</div>
     </div>
 
     <div class="table-card">
@@ -112,7 +127,7 @@
   </div>
 
   <footer>
-    <div>DLS CHAMPIONSHIP · STANDINGS</div>
+    <div>DLS CHAMPIONSHIP · VIEW ONLY</div>
   </footer>
 </div>
 
@@ -138,7 +153,6 @@
     return `<div class="form-strip">${chips}</div>`;
   }
 
-  // ---- FIXTURES ----
   function renderFixtures(data){
     const box = document.getElementById('fixturesBox');
     if(data.fixtures.length === 0){
@@ -192,7 +206,6 @@
     });
   }
 
-  // ---- STANDINGS ----
   function renderTable(data){
     const sorted = sortTeams(data.teams);
     const body = document.getElementById('tableBody');
@@ -234,7 +247,6 @@
     });
   }
 
-  // ---- TOP SCORERS ----
   function renderTopScorers(data){
     const box = document.getElementById('topScorersBox');
     const top = topScorers(data, 3).filter(t => t.gf > 0);
@@ -267,7 +279,6 @@
     });
   }
 
-  // ---- MENU: Teams modal ----
   function renderTeamsModal(data){
     const list = document.getElementById('teamsModalList');
     if(data.teams.length === 0){
@@ -287,7 +298,49 @@
     });
   }
 
-  // ---- MENU: Announcements modal ----
+  function renderResultsModal(data){
+    const list = document.getElementById('resultsModalList');
+    if(data.matches.length === 0){
+      list.innerHTML = '<div class="empty-state-small">No results published yet.</div>';
+      return;
+    }
+    const teamMap = Object.fromEntries(data.teams.map(t => [t.id, t]));
+    const cards = data.matches.map(m => {
+      const a = teamMap[m.teamAId];
+      const b = teamMap[m.teamBId];
+      if(!a || !b) return '';
+      return `
+        <div class="match-card">
+          ${m.matchday ? `<div class="fixture-matchday">MATCHDAY ${m.matchday}</div>` : ''}
+          <div class="match-team">
+            ${badgeHTML(a, 22)}
+            <span class="match-team-name" data-r-name="a"></span>
+          </div>
+          <div class="match-score">${m.scoreA} – ${m.scoreB}</div>
+          <div class="match-team right">
+            <span class="match-team-name" data-r-name="b" style="text-align:right;"></span>
+            ${badgeHTML(b, 22)}
+          </div>
+          <div class="match-time">${timeAgo(m.ts)}</div>
+        </div>
+      `;
+    }).join('');
+    list.innerHTML = cards;
+
+    let idx = 0;
+    data.matches.forEach(m => {
+      const a = teamMap[m.teamAId];
+      const b = teamMap[m.teamBId];
+      if(!a || !b) return;
+      const cardEls = list.querySelectorAll('.match-card')[idx];
+      if(cardEls){
+        cardEls.querySelector('[data-r-name="a"]').textContent = a.name;
+        cardEls.querySelector('[data-r-name="b"]').textContent = b.name;
+      }
+      idx++;
+    });
+  }
+
   function renderAnnouncementsModal(data){
     const list = document.getElementById('announceModalList');
     if(data.announcements.length === 0){
@@ -306,13 +359,11 @@
     });
   }
 
-  // ---- MENU: About modal ----
   function renderAboutModal(data){
     const el = document.getElementById('aboutModalText');
     el.textContent = data.about || 'No information added yet.';
   }
 
-  // ---- refresh cycle ----
   async function refresh(showError){
     try{
       const data = await fetchData();
@@ -321,6 +372,7 @@
       renderTable(data);
       renderTopScorers(data);
       renderTeamsModal(data);
+      renderResultsModal(data);
       renderAnnouncementsModal(data);
       renderAboutModal(data);
       document.getElementById('subLine').textContent = 'Live table · updates automatically';
@@ -335,7 +387,6 @@
   refresh(true);
   setInterval(() => refresh(false), REFRESH_MS);
 
-  // ---- menu open/close ----
   const menuBtn = document.getElementById('menuBtn');
   const menuOverlay = document.getElementById('menuOverlay');
   const menuPanel = document.getElementById('menuPanel');
@@ -347,13 +398,16 @@
   menuClose.addEventListener('click', closeMenu);
   menuOverlay.addEventListener('click', closeMenu);
 
-  // ---- modal helpers ----
   function openModal(id){ document.getElementById(id).classList.add('show'); }
   function closeModal(id){ document.getElementById(id).classList.remove('show'); }
 
   document.getElementById('menuTeams').addEventListener('click', () => { closeMenu(); openModal('teamsModalOverlay'); });
   document.getElementById('teamsModalClose').addEventListener('click', () => closeModal('teamsModalOverlay'));
   document.getElementById('teamsModalOverlay').addEventListener('click', (e) => { if(e.target.id === 'teamsModalOverlay') closeModal('teamsModalOverlay'); });
+
+  document.getElementById('menuResults').addEventListener('click', () => { closeMenu(); openModal('resultsModalOverlay'); });
+  document.getElementById('resultsModalClose').addEventListener('click', () => closeModal('resultsModalOverlay'));
+  document.getElementById('resultsModalOverlay').addEventListener('click', (e) => { if(e.target.id === 'resultsModalOverlay') closeModal('resultsModalOverlay'); });
 
   document.getElementById('menuAnnouncements').addEventListener('click', () => { closeMenu(); openModal('announceModalOverlay'); });
   document.getElementById('announceModalClose').addEventListener('click', () => closeModal('announceModalOverlay'));
