@@ -1,5 +1,5 @@
 // data.js — shared cloud storage via JSONBin.io
-// Used by index.html, admin.html, team.html
+// Used by index.html, admin.html, team.html, fixture.html
 
 const JSONBIN_BIN_ID = "6a4f8f67f5f4af5e297729db";
 const JSONBIN_API_KEY = "$2a$10$1YKDZY/xBG8zmm8plP.JvuExTB.4vK1B4fywqF7suieQOMYoocmKW";
@@ -10,10 +10,10 @@ const ADMIN_SESSION_KEY = "dls_admin_unlocked_session";
 
 function emptyState() {
   return {
-    teams: [],          // { id, name, logo, played, w, d, l, gf, ga, pts, form:[], history:[] }
-    matches: [],         // { id, teamAId, teamBId, scoreA, scoreB, ts, matchday }
-    fixtures: [],         // { id, teamAId, teamBId, kickoff (ISO string), matchday }
-    announcements: [],     // { id, text, ts }
+    teams: [],
+    matches: [],
+    fixtures: [],
+    announcements: [],
     about: "",
     matchdayCounter: 1
   };
@@ -83,8 +83,8 @@ function addTeam(data, name) {
   data.teams.push({
     id: uid(), name: trimmed, logo: null,
     played: 0, w: 0, d: 0, l: 0, gf: 0, ga: 0, pts: 0,
-    form: [],       // array of 'W' | 'D' | 'L', most recent last
-    history: []      // array of { ts, position } snapshots for the movement graph
+    form: [],
+    history: []
   });
   return true;
 }
@@ -136,7 +136,7 @@ function recordResult(data, teamAId, scoreA, teamBId, scoreB, matchday) {
     matchday: matchday || null
   });
   recalculateAllStats(data);
-  recordStandingsSnapshot(data);
+  maybeSnapshotCompletedMatchday(data, matchday);
   return true;
 }
 
@@ -145,27 +145,60 @@ function editMatchResult(data, matchId, newScoreA, newScoreB) {
   if (!m) return false;
   m.scoreA = newScoreA;
   m.scoreB = newScoreB;
-  // ts is untouched on purpose — editing a result must not change when it was played
   recalculateAllStats(data);
-  recordStandingsSnapshot(data);
   return true;
 }
 
+function editMatchMatchday(data, matchId, newMatchday) {
+  const m = data.matches.find(x => x.id === matchId);
+  if (!m) return false;
+  m.matchday = newMatchday || null;
+  return true;
+}
+
+function removeMatchResult(data, matchId) {
+  const idx = data.matches.findIndex(x => x.id === matchId);
+  if (idx === -1) return false;
+  data.matches.splice(idx, 1);
+  recalculateAllStats(data);
+  return true;
+}
+
+// Repairs matches that were saved with no matchday number. Sets every unmatchdayed
+// result to the given matchday, then recomputes standings snapshots so movement graphs
+// reflect the repaired data too.
+function assignMatchdayToUnset(data, matchday) {
+  let count = 0;
+  data.matches.forEach(m => {
+    if (!m.matchday) {
+      m.matchday = matchday;
+      count++;
+    }
+  });
+  if (count > 0) {
+    data.teams.forEach(t => { t.history = []; });
+    const matchdaysInOrder = [...new Set(data.matches.map(m => m.matchday).filter(Boolean))].sort((a, b) => a - b);
+    matchdaysInOrder.forEach(md => {
+      const stillPending = data.fixtures.some(f => f.matchday === md);
+      if (!stillPending) maybeSnapshotCompletedMatchday(data, md);
+    });
+  }
+  return count;
+}
+
 function recalculateAllStats(data) {
-  // reset every team's stats, then replay full match history to rebuild them.
   data.teams.forEach(t => {
     t.played = 0; t.w = 0; t.d = 0; t.l = 0; t.gf = 0; t.ga = 0; t.pts = 0;
     t.form = [];
   });
   const teamById = Object.fromEntries(data.teams.map(t => [t.id, t]));
 
-  // replay oldest-first so it doesn't matter that matches[] is stored newest-first
   const chronological = [...data.matches].sort((x, y) => x.ts - y.ts);
 
   chronological.forEach(m => {
     const a = teamById[m.teamAId];
     const b = teamById[m.teamBId];
-    if (!a || !b) return; // team was removed since — skip safely
+    if (!a || !b) return;
 
     a.played++; b.played++;
     a.gf += m.scoreA; a.ga += m.scoreB;
@@ -183,20 +216,25 @@ function recalculateAllStats(data) {
     }
   });
 
-  // keep only the last 5 results for the form strip
   data.teams.forEach(t => { t.form = t.form.slice(-5); });
 }
 
-// Snapshot every team's current table position, so team.html can plot movement over time.
-function recordStandingsSnapshot(data) {
+// Snapshot every team's current table position, but only once a given matchday's
+// fixtures have ALL been played (i.e. no fixtures with that matchday number remain).
+function maybeSnapshotCompletedMatchday(data, matchday) {
+  if (!matchday) return;
+  const stillPending = data.fixtures.some(f => f.matchday === matchday);
+  if (stillPending) return;
+
   const sorted = sortTeams(data.teams);
-  const ts = Date.now();
   sorted.forEach((t, i) => {
     const team = data.teams.find(x => x.id === t.id);
     if (!team) return;
     if (!Array.isArray(team.history)) team.history = [];
-    team.history.push({ ts, position: i + 1 });
-    // cap history length so storage doesn't grow forever
+    const alreadyRecorded = team.history.some(h => h.matchday === matchday);
+    if (alreadyRecorded) return;
+    team.history.push({ matchday, position: i + 1 });
+    team.history.sort((a, b) => a.matchday - b.matchday);
     if (team.history.length > 40) team.history = team.history.slice(-40);
   });
 }
@@ -227,7 +265,6 @@ function addFixture(data, teamAId, teamBId, kickoffISO, matchday) {
     kickoff: kickoffISO || null,
     matchday: matchday || null
   });
-  // fixtures sorted by kickoff time, undated ones last
   data.fixtures.sort((x, y) => {
     if (!x.kickoff && !y.kickoff) return 0;
     if (!x.kickoff) return 1;
@@ -258,8 +295,6 @@ function removeFixture(data, fixtureId) {
   return true;
 }
 
-// Records a result AND clears the matching fixture (if one exists) in one step —
-// this is what admin's "log result" flow should call when the result comes from a fixture.
 function recordResultAndClearFixture(data, fixtureId, scoreA, scoreB) {
   const f = data.fixtures.find(x => x.id === fixtureId);
   if (!f) return false;
@@ -305,6 +340,88 @@ function teamFixtures(data, teamId) {
   return data.fixtures.filter(f => f.teamAId === teamId || f.teamBId === teamId);
 }
 
+// ---- fixture comparison stats ----
+
+// Head-to-head: every past match between these two teams, regardless of who was home/away.
+function headToHeadMatches(data, teamAId, teamBId) {
+  return data.matches.filter(m =>
+    (m.teamAId === teamAId && m.teamBId === teamBId) ||
+    (m.teamAId === teamBId && m.teamBId === teamAId)
+  );
+}
+
+// Summarizes head-to-head results from teamAId's perspective.
+function headToHeadSummary(data, teamAId, teamBId) {
+  const matches = headToHeadMatches(data, teamAId, teamBId);
+  let winsA = 0, winsB = 0, draws = 0;
+  let highestWin = null; // { winnerId, scoreFor, scoreAgainst, ts }
+
+  matches.forEach(m => {
+    const aIsTeamA = m.teamAId === teamAId;
+    const scoreForA = aIsTeamA ? m.scoreA : m.scoreB;
+    const scoreForB = aIsTeamA ? m.scoreB : m.scoreA;
+
+    if (scoreForA > scoreForB) winsA++;
+    else if (scoreForB > scoreForA) winsB++;
+    else draws++;
+
+    const margin = Math.abs(scoreForA - scoreForB);
+    if (margin > 0) {
+      const winnerId = scoreForA > scoreForB ? teamAId : teamBId;
+      const winnerScore = Math.max(scoreForA, scoreForB);
+      const loserScore = Math.min(scoreForA, scoreForB);
+      if (!highestWin || margin > (highestWin.scoreFor - highestWin.scoreAgainst)) {
+        highestWin = { winnerId, scoreFor: winnerScore, scoreAgainst: loserScore, ts: m.ts };
+      }
+    }
+  });
+
+  return { winsA, winsB, draws, totalMatches: matches.length, highestWin };
+}
+
+// Form percentage from a team's last 5 results: W=3pts, D=1pt, L=0, out of max 15.
+function formPercent(team) {
+  if (!team.form || team.form.length === 0) return 0;
+  const points = team.form.reduce((sum, r) => sum + (r === 'W' ? 3 : r === 'D' ? 1 : 0), 0);
+  const maxPossible = team.form.length * 3;
+  return Math.round((points / maxPossible) * 100);
+}
+
+// Season averages per match played: points per game and goals scored per game.
+function seasonAverages(team) {
+  if (!team.played || team.played === 0) return { pointsPerGame: 0, goalsPerGame: 0 };
+  return {
+    pointsPerGame: Math.round((team.pts / team.played) * 10) / 10,
+    goalsPerGame: Math.round((team.gf / team.played) * 10) / 10
+  };
+}
+
+// Returns a team's most recent 5 matches (opponent, score, W/D/L, home/away) for the "Last 5" strip.
+function recentMatchSummaries(data, teamId, count) {
+  const matches = teamMatches(data, teamId)
+    .slice()
+    .slice(0, count || 5);
+
+  const teamMap = Object.fromEntries(data.teams.map(t => [t.id, t]));
+
+  return matches.map(m => {
+    const isHome = m.teamAId === teamId;
+    const opponentId = isHome ? m.teamBId : m.teamAId;
+    const opponent = teamMap[opponentId];
+    const scoreFor = isHome ? m.scoreA : m.scoreB;
+    const scoreAgainst = isHome ? m.scoreB : m.scoreA;
+    const result = scoreFor > scoreAgainst ? 'W' : scoreFor < scoreAgainst ? 'L' : 'D';
+    return {
+      opponentName: opponent ? opponent.name : 'Unknown',
+      isHome,
+      scoreFor,
+      scoreAgainst,
+      result,
+      ts: m.ts
+    };
+  });
+}
+
 function timeAgo(ts) {
   const diff = Date.now() - ts;
   const min = 60000, hr = 3600000, day = 86400000;
@@ -315,10 +432,10 @@ function timeAgo(ts) {
 }
 
 function formatKickoff(iso) {
-  if (!iso) return "AnyTime";
+  if (!iso) return "Time TBC";
   const d = new Date(iso);
   if (isNaN(d.getTime())) return "Time TBC";
   const dateStr = d.toLocaleDateString(undefined, { weekday: 'short', month: 'short', day: 'numeric' });
   const timeStr = d.toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' });
   return `${dateStr} · ${timeStr}`;
-                                       }
+}
