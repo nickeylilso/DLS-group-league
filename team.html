@@ -26,6 +26,14 @@
 
 <script src="data.js"></script>
 <script>
+  // apply whatever theme the viewer picked on the homepage (per-device, not synced)
+  (function applyStoredTheme(){
+    try{
+      const saved = localStorage.getItem('dls_theme_preference') || 'dark';
+      document.documentElement.setAttribute('data-theme', saved);
+    }catch(e){ console.error('Could not read theme preference:', e); }
+  })();
+
   const params = new URLSearchParams(window.location.search);
   const teamId = params.get('id');
 
@@ -83,7 +91,16 @@
   function renderGraph(data, team){
     const box = document.getElementById('teamGraphBox');
     const history = team.history || [];
-    if(history.length < 2){
+
+    const TOTAL_MATCHDAYS = 22;
+
+    const isLight = document.documentElement.getAttribute('data-theme') === 'light';
+    const axisColor = isLight ? '#22301f' : '#eef3ec';
+    const faintTickColor = isLight ? '#ddd4bc' : '#3d5c48';
+    const dotFill = isLight ? '#ffffff' : '#111a14';
+    const dotStroke = isLight ? '#b8860b' : '#e8b649';
+
+    if(history.length === 0){
       box.innerHTML = `
         <div class="panel">
           <div class="panel-title">Table Movement</div>
@@ -94,76 +111,71 @@
       return;
     }
 
-    // Sort chronologically by matchday, then de-duplicate (keep the latest snapshot
-    // per matchday in case of edits), then plot by SEQUENCE — point 1, 2, 3... —
-    // rather than by raw matchday number. This guarantees even spacing even if
-    // matchdays are skipped, non-sequential, or (as a data glitch) identical.
     const byMatchday = new Map();
     [...history]
       .sort((a, b) => a.matchday - b.matchday)
       .forEach(h => byMatchday.set(h.matchday, h));
-
     const sortedHistory = [...byMatchday.values()].sort((a, b) => a.matchday - b.matchday);
 
-    if(sortedHistory.length < 2){
-      box.innerHTML = `
-        <div class="panel">
-          <div class="panel-title">Table Movement</div>
-          <div class="panel-hint">Updates once a matchday's fixtures are all completed.</div>
-          <div class="empty-state-small">Not enough completed matchdays yet to show movement.</div>
-        </div>
-      `;
-      return;
-    }
-
-    const w = 320, h = 220, padL = 34, padR = 16, padT = 16, padB = 34;
+    const w = 340, h = 240, padL = 30, padR = 16, padT = 16, padB = 40;
     const plotW = w - padL - padR;
     const plotH = h - padT - padB;
 
-    const positions = sortedHistory.map(pt => pt.position);
-    const maxPos = Math.max(...positions, data.teams ? data.teams.length : positions.length);
+    const teamCount = (data.teams && data.teams.length) ? data.teams.length : 1;
     const minPos = 1;
-    const stepCount = sortedHistory.length - 1;
+    const maxPos = teamCount;
 
-    function xFor(seqIndex){
-      if(stepCount === 0) return padL + plotW / 2;
-      return padL + (seqIndex / stepCount) * plotW;
+    const minMD = 1;
+    const maxMD = TOTAL_MATCHDAYS;
+
+    function xFor(md){
+      return padL + ((md - minMD) / (maxMD - minMD)) * plotW;
     }
     function yFor(pos){
       if(maxPos === minPos) return padT + plotH / 2;
       return padT + ((pos - minPos) / (maxPos - minPos)) * plotH;
     }
 
-    const points = sortedHistory.map((pt, i) => `${xFor(i)},${yFor(pt.position)}`).join(' ');
-    const dots = sortedHistory.map((pt, i) =>
-      `<circle cx="${xFor(i)}" cy="${yFor(pt.position)}" r="3.5" fill="#e8b649"/>`
+    const points = sortedHistory.map(pt => `${xFor(pt.matchday)},${yFor(pt.position)}`).join(' ');
+    const dots = sortedHistory.map(pt =>
+      `<circle cx="${xFor(pt.matchday)}" cy="${yFor(pt.position)}" r="4" fill="${dotFill}" stroke="${dotStroke}" stroke-width="2"/>`
     ).join('');
 
     const yTicks = [];
     for(let p = 1; p <= maxPos; p++){
       yTicks.push(`
-        <text x="${padL - 8}" y="${yFor(p) + 3}" text-anchor="end" font-size="9" fill="#a9bdb0" font-family="JetBrains Mono, monospace">${p}</text>
-        <line x1="${padL - 4}" y1="${yFor(p)}" x2="${padL}" y2="${yFor(p)}" stroke="#7a6532" stroke-width="1"/>
+        <text x="${padL - 10}" y="${yFor(p) + 3}" text-anchor="end" font-size="9" fill="${axisColor}" font-family="JetBrains Mono, monospace" font-weight="700">${p}</text>
+        <line x1="${padL - 5}" y1="${yFor(p)}" x2="${padL}" y2="${yFor(p)}" stroke="${axisColor}" stroke-width="1.5"/>
       `);
     }
 
-    const xTicks = sortedHistory.map((pt, i) => `
-      <text x="${xFor(i)}" y="${h - padB + 16}" text-anchor="middle" font-size="9" fill="#a9bdb0" font-family="JetBrains Mono, monospace">${pt.matchday}</text>
-      <line x1="${xFor(i)}" y1="${h - padB}" x2="${xFor(i)}" y2="${h - padB + 4}" stroke="#7a6532" stroke-width="1"/>
-    `).join('');
+    const dataMDs = new Set(sortedHistory.map(pt => pt.matchday));
+    const xTicks = [];
+    for(let md = 1; md <= TOTAL_MATCHDAYS; md++){
+      if(dataMDs.has(md)){
+        xTicks.push(`
+          <text x="${xFor(md)}" y="${h - padB + 18}" text-anchor="middle" font-size="9" fill="${axisColor}" font-family="JetBrains Mono, monospace" font-weight="700">${md}</text>
+          <line x1="${xFor(md)}" y1="${h - padB}" x2="${xFor(md)}" y2="${h - padB + 5}" stroke="${axisColor}" stroke-width="1.5"/>
+        `);
+      } else {
+        xTicks.push(`
+          <line x1="${xFor(md)}" y1="${h - padB}" x2="${xFor(md)}" y2="${h - padB + 4}" stroke="${faintTickColor}" stroke-width="1"/>
+        `);
+      }
+    }
 
     box.innerHTML = `
       <div class="panel">
         <div class="panel-title">Table Movement</div>
         <div class="panel-hint">Position after each completed matchday (lower is better).</div>
         <svg viewBox="0 0 ${w} ${h}" class="movement-graph">
-          <line x1="${padL}" y1="${padT}" x2="${padL}" y2="${h - padB}" stroke="#1c4530" stroke-width="1.5"/>
-          <line x1="${padL}" y1="${h - padB}" x2="${w - padR}" y2="${h - padB}" stroke="#1c4530" stroke-width="1.5"/>
-          <text x="${padL - 26}" y="${padT + plotH/2}" text-anchor="middle" font-size="9" fill="#7a6532" font-family="JetBrains Mono, monospace" transform="rotate(-90 ${padL - 26} ${padT + plotH/2})">STANDINGS</text>
-          <text x="${padL + plotW/2}" y="${h - 4}" text-anchor="middle" font-size="9" fill="#7a6532" font-family="JetBrains Mono, monospace">MATCH DAYS</text>
+          <line x1="${padL}" y1="${padT}" x2="${padL}" y2="${h - padB}" stroke="${axisColor}" stroke-width="2"/>
+          <line x1="${padL}" y1="${h - padB}" x2="${w - padR}" y2="${h - padB}" stroke="${axisColor}" stroke-width="2"/>
+          <text x="${padL - 22}" y="${padT + plotH/2}" text-anchor="middle" font-size="10" fill="${axisColor}" font-family="JetBrains Mono, monospace" font-weight="700" letter-spacing="1" transform="rotate(-90 ${padL - 22} ${padT + plotH/2})">STANDINGS</text>
+          <text x="${padL + plotW/2}" y="${h - 6}" text-anchor="middle" font-size="10" fill="${axisColor}" font-family="JetBrains Mono, monospace" font-weight="700" letter-spacing="1">MATCH DAYS</text>
           ${yTicks.join('')}
-          ${xTicks}
-          <polyline points="${points}" fill="none" stroke="#e8b649" stroke-width="2"/>
+          ${xTicks.join('')}
+          <polyline points="${points}" fill="none" stroke="${axisColor}" stroke-width="2.5" stroke-linejoin="round" stroke-linecap="round"/>
           ${dots}
         </svg>
       </div>
