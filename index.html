@@ -43,7 +43,16 @@
     <button class="menu-item" id="menuAbout">
       <span class="menu-item-icon">ℹ️</span> About Us
     </button>
-    <button class="menu-item" id="menuAdmin">
+
+    <div style="margin-top:4px;">
+      <div class="menu-item-icon" style="font-size:11px; letter-spacing:0.08em; color:var(--chalk-dim); font-family:'JetBrains Mono', monospace; margin-bottom:6px; padding-left:2px;">THEME</div>
+      <div class="theme-toggle">
+        <button class="theme-toggle-btn" id="themeDarkBtn">🌙 Dark</button>
+        <button class="theme-toggle-btn" id="themeLightBtn">☀️ Light</button>
+      </div>
+    </div>
+
+    <button class="menu-item" id="menuAdmin" style="margin-top:8px;">
       <span class="menu-item-icon">🔐</span> Admin Login
     </button>
   </div>
@@ -136,6 +145,30 @@
   const REFRESH_MS = 6000;
   let currentData = null;
 
+  // ---- theme (per-device, saved locally, not synced to other viewers) ----
+  const THEME_KEY = 'dls_theme_preference';
+
+  function applyTheme(theme){
+    document.documentElement.setAttribute('data-theme', theme);
+    document.getElementById('themeDarkBtn').classList.toggle('active', theme === 'dark');
+    document.getElementById('themeLightBtn').classList.toggle('active', theme === 'light');
+  }
+
+  function loadTheme(){
+    let saved = 'dark';
+    try{ saved = localStorage.getItem(THEME_KEY) || 'dark'; }catch(e){ console.error('Could not read theme preference:', e); }
+    applyTheme(saved);
+  }
+
+  function setTheme(theme){
+    applyTheme(theme);
+    try{ localStorage.setItem(THEME_KEY, theme); }catch(e){ console.error('Could not save theme preference:', e); }
+  }
+
+  loadTheme();
+  document.getElementById('themeDarkBtn').addEventListener('click', () => setTheme('dark'));
+  document.getElementById('themeLightBtn').addEventListener('click', () => setTheme('light'));
+
   function badgeHTML(team, size){
     if(team.logo){
       return `<img class="badge" style="width:${size}px;height:${size}px;" src="${team.logo}" alt="">`;
@@ -165,7 +198,7 @@
       const b = teamMap[f.teamBId];
       if(!a || !b) return '';
       return `
-        <div class="fixture-card">
+        <div class="fixture-card" style="cursor:pointer;" data-fixture-id="${f.id}">
           ${f.matchday ? `<div class="fixture-matchday">MATCHDAY ${f.matchday}</div>` : ''}
           <div class="fixture-row">
             <div class="fixture-team">
@@ -203,6 +236,12 @@
         cardEls.querySelector('[data-fx-name="b"]').textContent = b.name;
       }
       idx++;
+    });
+
+    document.querySelectorAll('[data-fixture-id]').forEach(card => {
+      card.addEventListener('click', () => {
+        window.location.href = 'fixture.html?id=' + encodeURIComponent(card.getAttribute('data-fixture-id'));
+      });
     });
   }
 
@@ -306,7 +345,6 @@
     }
     const teamMap = Object.fromEntries(data.teams.map(t => [t.id, t]));
 
-    // group matches by matchday (matches with no matchday go in an "Other" bucket at the end)
     const groups = new Map();
     data.matches.forEach(m => {
       const key = m.matchday || 'other';
@@ -314,7 +352,6 @@
       groups.get(key).push(m);
     });
 
-    // sort group keys: numeric matchdays descending (newest first), 'other' last
     const sortedKeys = [...groups.keys()].sort((x, y) => {
       if(x === 'other') return 1;
       if(y === 'other') return -1;
