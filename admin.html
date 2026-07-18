@@ -114,6 +114,16 @@
     </div>
   </div>
 
+  <!-- Data repair -->
+  <div class="panel">
+    <div class="panel-title">Fix missing matchdays</div>
+    <div class="panel-hint">If results are showing under "Other results" instead of a matchday, use this to assign them one in bulk.</div>
+    <div class="fixture-input-row">
+      <input type="number" id="repairMatchday" min="1" placeholder="Matchday # to assign">
+    </div>
+    <button class="btn-primary" id="repairMatchdayBtn">Assign to unmatched results</button>
+  </div>
+
   <div class="status" id="status"></div>
 
   <footer>
@@ -123,6 +133,14 @@
 
 <script src="data.js"></script>
 <script>
+  // apply whatever theme the viewer picked on the homepage (per-device, not synced)
+  (function applyStoredTheme(){
+    try{
+      const saved = localStorage.getItem('dls_theme_preference') || 'dark';
+      document.documentElement.setAttribute('data-theme', saved);
+    }catch(e){ console.error('Could not read theme preference:', e); }
+  })();
+
   const lockScreen = document.getElementById('lockScreen');
   const adminWrap = document.getElementById('adminWrap');
   const lockError = document.getElementById('lockError');
@@ -362,9 +380,14 @@
       const teamAId = document.getElementById('fxTeamA').value;
       const teamBId = document.getElementById('fxTeamB').value;
       const kickoff = document.getElementById('fxKickoff').value;
-      const matchday = parseInt(document.getElementById('fxMatchday').value, 10) || null;
+      const matchdayRaw = document.getElementById('fxMatchday').value;
+      const matchday = parseInt(matchdayRaw, 10);
       if(teamAId === teamBId){
         showStatus('Pick two different clubs', true);
+        return;
+      }
+      if(!matchdayRaw || isNaN(matchday) || matchday < 1){
+        showStatus('Enter a valid matchday number before adding a fixture', true);
         return;
       }
       const kickoffISO = kickoff ? new Date(kickoff).toISOString() : null;
@@ -373,7 +396,7 @@
         showStatus('Could not add fixture', true);
         return;
       }
-      if(matchday) data.matchdayCounter = matchday;
+      data.matchdayCounter = matchday;
       const saved = await saveAndRender();
       if(saved) showStatus('Fixture added', false);
     });
@@ -802,7 +825,22 @@
     const ok = await saveAndRender();
     if(ok) showStatus('All teams cleared', false);
   });
+
+  document.getElementById('repairMatchdayBtn').addEventListener('click', async () => {
+    const md = parseInt(document.getElementById('repairMatchday').value, 10);
+    if(!md || md < 1){
+      showStatus('Enter a valid matchday number', true);
+      return;
+    }
+    const count = assignMatchdayToUnset(data, md);
+    if(count === 0){
+      showStatus('No results were missing a matchday', false);
+      return;
+    }
+    const ok = await saveAndRender();
+    if(ok) showStatus(`${count} result${count === 1 ? '' : 's'} assigned to Matchday ${md}`, false);
+  });
 </script>
 
 </body>
-  </html>
+</html>
