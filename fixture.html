@@ -1,0 +1,432 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Fixture Analysis — DLS Championship</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+<div class="wrap">
+  <header>
+    <a class="admin-link" href="index.html" style="margin-bottom:14px; display:inline-block;">← Back to table</a>
+  </header>
+
+  <div id="matchupHeaderBox"></div>
+  <div id="winProbBox"></div>
+  <div id="formGaugeBox"></div>
+  <div id="last5Box"></div>
+  <div id="h2hBox"></div>
+  <div id="averagesBox"></div>
+
+  <footer>
+    <div>DLS CHAMPIONSHIP · FIXTURE ANALYSIS</div>
+  </footer>
+</div>
+
+<script src="data.js"></script>
+<script>
+  // apply whatever theme the viewer picked on the homepage (per-device, not synced)
+  (function applyStoredTheme(){
+    try{
+      const saved = localStorage.getItem('dls_theme_preference') || 'dark';
+      document.documentElement.setAttribute('data-theme', saved);
+    }catch(e){ console.error('Could not read theme preference:', e); }
+  })();
+
+  const params = new URLSearchParams(window.location.search);
+  const fixtureId = params.get('id');
+
+  function badgeHTML(team, size){
+    if(team.logo){
+      return `<img class="badge" style="width:${size}px;height:${size}px;" src="${team.logo}" alt="">`;
+    }
+    const initials = team.name.split(' ').map(w => w[0]).slice(0,2).join('').toUpperCase();
+    return `<div class="badge-fallback" style="width:${size}px;height:${size}px;">${initials}</div>`;
+  }
+
+  function escapeHTML(str){
+    const div = document.createElement('div');
+    div.textContent = str;
+    return div.innerHTML;
+  }
+
+  // Estimate win/draw/win probability from each team's current form and points-per-game.
+  // This isn't a betting-grade model — it's a simple, transparent blend meant to give
+  // a quick "who's favored" read, the same way the reference bar communicates it.
+  function estimateWinProbability(teamA, teamB){
+    const formA = formPercent(teamA);
+    const formB = formPercent(teamB);
+    const avgA = seasonAverages(teamA);
+    const avgB = seasonAverages(teamB);
+
+    const strengthA = formA * 0.6 + (avgA.pointsPerGame / 3) * 100 * 0.4;
+    const strengthB = formB * 0.6 + (avgB.pointsPerGame / 3) * 100 * 0.4;
+
+    const sA = Math.max(strengthA, 5);
+    const sB = Math.max(strengthB, 5);
+    const total = sA + sB;
+
+    let pctA = Math.round((sA / total) * 100);
+    let pctB = Math.round((sB / total) * 100);
+
+    const gap = Math.abs(pctA - pctB);
+    let pctDraw = Math.max(8, 24 - Math.round(gap * 0.3));
+
+    const rawTotal = pctA + pctB + pctDraw;
+    pctA = Math.round((pctA / rawTotal) * 100);
+    pctDraw = Math.round((pctDraw / rawTotal) * 100);
+    pctB = 100 - pctA - pctDraw;
+
+    return { pctA, pctDraw, pctB };
+  }
+
+  function renderWinProbability(teamA, teamB){
+    const box = document.getElementById('winProbBox');
+    const { pctA, pctDraw, pctB } = estimateWinProbability(teamA, teamB);
+
+    box.innerHTML = `
+      <div class="panel">
+        <div class="winprob-title">WIN PROBABILITY</div>
+        <div class="winprob-row">
+          <div class="winprob-side">
+            <div class="winprob-pct" style="color:var(--green);">${pctA}%</div>
+            <div class="winprob-code" style="color:var(--green);" id="wpCodeA"></div>
+          </div>
+          <div class="winprob-draw">
+            <div class="winprob-pct">${pctDraw}%</div>
+            <div class="winprob-code">DRAW</div>
+          </div>
+          <div class="winprob-side right">
+            <div class="winprob-pct" style="color:var(--red);">${pctB}%</div>
+            <div class="winprob-code" style="color:var(--red);" id="wpCodeB"></div>
+          </div>
+        </div>
+        <div class="winprob-bar-track">
+          <div class="winprob-bar-seg" style="width:${pctA}%; background:var(--green);"></div>
+          <div class="winprob-bar-seg" style="width:${pctDraw}%; background:var(--chalk-dim);"></div>
+          <div class="winprob-bar-seg" style="width:${pctB}%; background:var(--red);"></div>
+        </div>
+      </div>
+    `;
+    document.getElementById('wpCodeA').textContent = teamA.name.slice(0, 3).toUpperCase();
+    document.getElementById('wpCodeB').textContent = teamB.name.slice(0, 3).toUpperCase();
+  }
+
+  // ---- header: team names + badges, matchday/kickoff ----
+  function renderMatchupHeader(fixture, teamA, teamB){
+    const box = document.getElementById('matchupHeaderBox');
+    box.innerHTML = `
+      <div class="matchup-header">
+        <div class="matchup-team">
+          ${badgeHTML(teamA, 30)}
+          <span class="matchup-team-name" id="mhNameA"></span>
+        </div>
+        <div class="matchup-team right">
+          <span class="matchup-team-name" id="mhNameB"></span>
+          ${badgeHTML(teamB, 30)}
+        </div>
+      </div>
+      <div class="matchup-sub">
+        ${fixture.matchday ? `MATCHDAY ${fixture.matchday} · ` : ''}${formatKickoff(fixture.kickoff)}
+      </div>
+    `;
+    document.getElementById('mhNameA').textContent = teamA.name;
+    document.getElementById('mhNameB').textContent = teamB.name;
+  }
+
+  // ---- form circle (SVG ring) ----
+  function formRingSVG(percent, color, size){
+    const r = (size - 8) / 2;
+    const c = size / 2;
+    const circumference = 2 * Math.PI * r;
+    const offset = circumference - (percent / 100) * circumference;
+    return `
+      <svg width="${size}" height="${size}" viewBox="0 0 ${size} ${size}">
+        <circle cx="${c}" cy="${c}" r="${r}" fill="none" stroke="var(--line)" stroke-width="6"/>
+        <circle cx="${c}" cy="${c}" r="${r}" fill="none" stroke="${color}" stroke-width="6"
+          stroke-dasharray="${circumference}" stroke-dashoffset="${offset}"
+          stroke-linecap="round" transform="rotate(-90 ${c} ${c})"/>
+      </svg>
+    `;
+  }
+
+  // ---- league position range gauge (vertical bar showing where each team sits) ----
+  function positionGaugeSVG(posA, posB, totalTeams){
+    const h = 140, topPad = 10, botPad = 10;
+    const usableH = h - topPad - botPad;
+    function yFor(pos){
+      if(totalTeams <= 1) return topPad + usableH / 2;
+      return topPad + ((pos - 1) / (totalTeams - 1)) * usableH;
+    }
+    const yA = yFor(posA);
+    const yB = yFor(posB);
+    return `
+      <svg width="90" height="${h}" viewBox="0 0 90 ${h}">
+        <line x1="25" y1="${topPad}" x2="25" y2="${h - botPad}" stroke="var(--green)" stroke-width="2"/>
+        <line x1="65" y1="${topPad}" x2="65" y2="${h - botPad}" stroke="var(--red)" stroke-width="2"/>
+        <rect x="10" y="${yA - 14}" width="30" height="28" rx="5" fill="var(--green)"/>
+        <text x="25" y="${yA + 5}" text-anchor="middle" font-size="14" font-weight="700" fill="#fff" font-family="Space Grotesk, sans-serif">${posA}</text>
+        <rect x="50" y="${yB - 14}" width="30" height="28" rx="5" fill="var(--red)"/>
+        <text x="65" y="${yB + 5}" text-anchor="middle" font-size="14" font-weight="700" fill="#fff" font-family="Space Grotesk, sans-serif">${posB}</text>
+      </svg>
+    `;
+  }
+
+  function renderFormGauge(data, teamA, teamB){
+    const box = document.getElementById('formGaugeBox');
+    const sorted = sortTeams(data.teams);
+    const posA = sorted.findIndex(t => t.id === teamA.id) + 1;
+    const posB = sorted.findIndex(t => t.id === teamB.id) + 1;
+    const formA = formPercent(teamA);
+    const formB = formPercent(teamB);
+
+    box.innerHTML = `
+      <div class="panel">
+        <div class="panel-title" style="text-align:center;">League Position · Live</div>
+        <div class="form-gauge-row">
+          <div class="form-gauge-item">
+            ${formRingSVG(formA, 'var(--green)', 110)}
+            <div class="form-gauge-label">
+              <div class="form-gauge-pct" style="color:var(--green);">${formA}%</div>
+              <div class="form-gauge-sub">FORM</div>
+            </div>
+          </div>
+          <div class="form-gauge-item">
+            ${positionGaugeSVG(posA, posB, sorted.length)}
+          </div>
+          <div class="form-gauge-item">
+            ${formRingSVG(formB, 'var(--red)', 110)}
+            <div class="form-gauge-label">
+              <div class="form-gauge-pct" style="color:var(--red);">${formB}%</div>
+              <div class="form-gauge-sub">FORM</div>
+            </div>
+          </div>
+        </div>
+      </div>
+    `;
+  }
+
+  // ---- Last 5 matches, side by side ----
+  function renderLast5(data, teamA, teamB){
+    const box = document.getElementById('last5Box');
+    const recentA = recentMatchSummaries(data, teamA.id, 5);
+    const recentB = recentMatchSummaries(data, teamB.id, 5);
+    const rows = Math.max(recentA.length, recentB.length);
+
+    if(rows === 0){
+      box.innerHTML = `
+        <div class="panel">
+          <div class="panel-title" style="text-align:center;">Last 5 Matches</div>
+          <div class="empty-state-small">Neither team has played yet.</div>
+        </div>
+      `;
+      return;
+    }
+
+    let rowsHTML = '';
+    for(let i = 0; i < rows; i++){
+      const ra = recentA[i];
+      const rb = recentB[i];
+      rowsHTML += `
+        <div class="last5-row">
+          <div class="last5-side">
+            ${ra ? `
+              <span class="form-chip form-chip-lg ${ra.result === 'W' ? 'form-w' : ra.result === 'D' ? 'form-d' : 'form-l'}">${ra.result}</span>
+              <span class="last5-loc">${ra.isHome ? '🏠' : '@'}</span>
+              <span class="last5-opp" data-opp="${i}-a"></span>
+              <span class="last5-score">${ra.scoreFor}:${ra.scoreAgainst}</span>
+            ` : ''}
+          </div>
+          <div class="last5-side right">
+            ${rb ? `
+              <span class="last5-score">${rb.scoreFor}:${rb.scoreAgainst}</span>
+              <span class="last5-opp" data-opp="${i}-b"></span>
+              <span class="last5-loc">${rb.isHome ? '🏠' : '@'}</span>
+              <span class="form-chip form-chip-lg ${rb.result === 'W' ? 'form-w' : rb.result === 'D' ? 'form-d' : 'form-l'}">${rb.result}</span>
+            ` : ''}
+          </div>
+        </div>
+      `;
+    }
+
+    box.innerHTML = `
+      <div class="panel">
+        <div class="panel-title" style="text-align:center;">Last 5 Matches</div>
+        <div id="last5RowsWrap">${rowsHTML}</div>
+      </div>
+    `;
+
+    recentA.forEach((ra, i) => {
+      const el = document.querySelector(`[data-opp="${i}-a"]`);
+      if(el) el.textContent = ra.opponentName;
+    });
+    recentB.forEach((rb, i) => {
+      const el = document.querySelector(`[data-opp="${i}-b"]`);
+      if(el) el.textContent = rb.opponentName;
+    });
+  }
+
+  // ---- head-to-head donut + highest win ----
+  function renderH2H(data, teamA, teamB){
+    const box = document.getElementById('h2hBox');
+    const summary = headToHeadSummary(data, teamA.id, teamB.id);
+    const { winsA, winsB, draws, totalMatches, highestWin } = summary;
+
+    if(totalMatches === 0){
+      box.innerHTML = `
+        <div class="panel">
+          <div class="panel-title" style="text-align:center;">Previous Meetings</div>
+          <div class="empty-state-small">These teams haven't played each other yet.</div>
+        </div>
+      `;
+      return;
+    }
+
+    const total = totalMatches;
+    const drawFrac = draws / total;
+    const winBFrac = winsB / total;
+    const winAFrac = winsA / total;
+
+    const circumference = 2 * Math.PI * 70;
+    const drawLen = drawFrac * circumference;
+    const winBLen = winBFrac * circumference;
+    const winALen = winAFrac * circumference;
+
+    let teamMap = Object.fromEntries(data.teams.map(t => [t.id, t]));
+    const highestWinTeam = highestWin ? teamMap[highestWin.winnerId] : null;
+
+    box.innerHTML = `
+      <div class="panel">
+        <div class="panel-title" style="text-align:center;">Previous Meetings</div>
+        <div class="h2h-row">
+          <div class="h2h-col">
+            <div class="h2h-label" style="color:var(--green);" id="h2hNameA"></div>
+            <div class="h2h-sub">Wins</div>
+            <div class="h2h-value" style="color:var(--green);">${winsA}</div>
+          </div>
+          <div class="h2h-donut-wrap">
+            <svg width="160" height="160" viewBox="0 0 160 160">
+              <circle cx="80" cy="80" r="70" fill="none" stroke="var(--line)" stroke-width="14"/>
+              <circle cx="80" cy="80" r="70" fill="none" stroke="var(--red)" stroke-width="14"
+                stroke-dasharray="${winBLen} ${circumference}" stroke-dashoffset="0"
+                stroke-linecap="round" transform="rotate(-90 80 80)"/>
+              <circle cx="80" cy="80" r="70" fill="none" stroke="var(--green)" stroke-width="14"
+                stroke-dasharray="${drawLen} ${circumference}" stroke-dashoffset="${-winBLen}"
+                stroke-linecap="round" transform="rotate(-90 80 80)"/>
+              <circle cx="80" cy="80" r="70" fill="none" stroke="var(--green)" stroke-width="14"
+                stroke-dasharray="${winALen} ${circumference}" stroke-dashoffset="${-(winBLen + drawLen)}"
+                stroke-linecap="round" transform="rotate(-90 80 80)"/>
+            </svg>
+            <div class="h2h-donut-center">
+              <div class="h2h-donut-num">${draws}</div>
+              <div class="h2h-donut-label">Draws</div>
+            </div>
+          </div>
+          <div class="h2h-col">
+            <div class="h2h-label" style="color:var(--red);" id="h2hNameB"></div>
+            <div class="h2h-sub">Wins</div>
+            <div class="h2h-value" style="color:var(--red);">${winsB}</div>
+          </div>
+        </div>
+
+        <div class="h2h-highest">
+          <div class="panel-hint" style="text-align:center; margin-bottom:10px;">HIGHEST WIN</div>
+          ${highestWin ? `
+            <div class="h2h-highest-row">
+              <span class="h2h-highest-na">—</span>
+              <span class="h2h-highest-score">${highestWin.scoreFor}:${highestWin.scoreAgainst}</span>
+              <span class="h2h-highest-team" id="h2hHighestName"></span>
+              ${badgeHTML(highestWinTeam, 24)}
+            </div>
+            <div class="h2h-highest-date">${new Date(highestWin.ts).toLocaleDateString(undefined, { day:'2-digit', month:'short', year:'numeric' })}</div>
+          ` : `
+            <div class="empty-state-small">No decisive result yet — every meeting has been a draw.</div>
+          `}
+        </div>
+      </div>
+    `;
+    document.getElementById('h2hNameA').textContent = teamA.name;
+    document.getElementById('h2hNameB').textContent = teamB.name;
+    if(highestWin){
+      const nameEl = document.getElementById('h2hHighestName');
+      if(nameEl) nameEl.textContent = highestWinTeam ? highestWinTeam.name : 'Unknown';
+    }
+  }
+
+  // ---- averages: points per game, goals per game ----
+  function renderAverages(teamA, teamB){
+    const box = document.getElementById('averagesBox');
+    const avgA = seasonAverages(teamA);
+    const avgB = seasonAverages(teamB);
+    const maxPts = Math.max(avgA.pointsPerGame, avgB.pointsPerGame, 1);
+    const maxGoals = Math.max(avgA.goalsPerGame, avgB.goalsPerGame, 1);
+
+    box.innerHTML = `
+      <div class="panel">
+        <div class="panel-title" style="text-align:center;">Averages</div>
+
+        <div class="avg-block">
+          <div class="avg-label">Points</div>
+          <div class="avg-bar-row">
+            <span class="avg-value" style="color:var(--green);">${avgA.pointsPerGame}</span>
+            <div class="avg-bar-track">
+              <div class="avg-bar-fill left" style="width:${(avgA.pointsPerGame / (maxPts * 2)) * 100}%; background:var(--green);"></div>
+              <div class="avg-bar-fill right" style="width:${(avgB.pointsPerGame / (maxPts * 2)) * 100}%; background:var(--red);"></div>
+            </div>
+            <span class="avg-value" style="color:var(--red);">${avgB.pointsPerGame}</span>
+          </div>
+        </div>
+
+        <div class="avg-block">
+          <div class="avg-label">Goals Scored</div>
+          <div class="avg-bar-row">
+            <span class="avg-value" style="color:var(--green);">${avgA.goalsPerGame}</span>
+            <div class="avg-bar-track">
+              <div class="avg-bar-fill left" style="width:${(avgA.goalsPerGame / (maxGoals * 2)) * 100}%; background:var(--green);"></div>
+              <div class="avg-bar-fill right" style="width:${(avgB.goalsPerGame / (maxGoals * 2)) * 100}%; background:var(--red);"></div>
+            </div>
+            <span class="avg-value" style="color:var(--red);">${avgB.goalsPerGame}</span>
+          </div>
+        </div>
+      </div>
+    `;
+  }
+
+  async function load(){
+    if(!fixtureId){
+      document.getElementById('matchupHeaderBox').innerHTML = '<div class="empty-state">No fixture specified.</div>';
+      return;
+    }
+    try{
+      const data = await fetchData();
+      const fixture = data.fixtures.find(f => f.id === fixtureId);
+      if(!fixture){
+        document.getElementById('matchupHeaderBox').innerHTML = '<div class="empty-state">Fixture not found — it may have already been played or removed.</div>';
+        return;
+      }
+      const teamA = data.teams.find(t => t.id === fixture.teamAId);
+      const teamB = data.teams.find(t => t.id === fixture.teamBId);
+      if(!teamA || !teamB){
+        document.getElementById('matchupHeaderBox').innerHTML = '<div class="empty-state">One of the teams in this fixture no longer exists.</div>';
+        return;
+      }
+
+      renderMatchupHeader(fixture, teamA, teamB);
+      renderWinProbability(teamA, teamB);
+      renderFormGauge(data, teamA, teamB);
+      renderLast5(data, teamA, teamB);
+      renderH2H(data, teamA, teamB);
+      renderAverages(teamA, teamB);
+    }catch(e){
+      document.getElementById('matchupHeaderBox').innerHTML = '<div class="empty-state">Could not load fixture data — check connection.</div>';
+      console.error(e);
+    }
+  }
+
+  load();
+</script>
+
+</body>
+</html>
