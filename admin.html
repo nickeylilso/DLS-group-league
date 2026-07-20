@@ -124,6 +124,13 @@
     <button class="btn-primary" id="repairMatchdayBtn">Assign to unmatched results</button>
   </div>
 
+  <!-- One-time cloud migration -->
+  <div class="panel">
+    <div class="panel-title">Migrate old data to Firebase</div>
+    <div class="panel-hint">One-time only. Pulls your existing teams, results, fixtures, and announcements from the old JSONBin storage into Firebase. Run this once, then never again — running it a second time will overwrite anything new you've added here since.</div>
+    <button class="btn-ghost" id="migrateBtn">Migrate from JSONBin now</button>
+  </div>
+
   <div class="status" id="status"></div>
 
   <footer>
@@ -131,6 +138,8 @@
   </footer>
 </div>
 
+<script src="https://www.gstatic.com/firebasejs/10.7.1/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.7.1/firebase-firestore-compat.js"></script>
 <script src="data.js"></script>
 <script>
   // apply whatever theme the viewer picked on the homepage (per-device, not synced)
@@ -651,7 +660,7 @@
         if(file.size > 8 * 1024 * 1024){ showStatus('Image too large (max 8MB)', true); return; }
         try{
           showStatus('Processing logo…', false);
-          const compressed = await compressImageToSquare(file, 72, 0.72);
+          const compressed = await compressImageToSquare(file, 160, 0.85);
           setTeamLogo(data, id, compressed);
           const ok = await saveAndRender();
           if(ok) showStatus('Logo updated', false);
@@ -839,6 +848,20 @@
     }
     const ok = await saveAndRender();
     if(ok) showStatus(`${count} result${count === 1 ? '' : 's'} assigned to Matchday ${md}`, false);
+  });
+
+  document.getElementById('migrateBtn').addEventListener('click', async () => {
+    if(!confirm('Copy your old JSONBin data into Firebase now? Only do this ONCE — running it again later will overwrite anything new added since.')) return;
+    showStatus('Migrating from JSONBin…', false);
+    try{
+      const migrated = await migrateFromJsonBin();
+      data = migrated;
+      renderAll();
+      showStatus(`Migration complete — ${migrated.teams.length} teams, ${migrated.matches.length} results copied to Firebase`, false);
+    }catch(e){
+      console.error(e);
+      showStatus('Migration failed: ' + (e.message || 'unknown error'), true);
+    }
   });
 </script>
 
