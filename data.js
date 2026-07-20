@@ -1,6 +1,27 @@
-// data.js — shared cloud storage via JSONBin.io
+// data.js — shared cloud storage via Firebase Firestore
 // Used by index.html, admin.html, team.html, fixture.html
+// NOTE: each HTML page must load the Firebase SDK scripts BEFORE this file —
+// see the <script> tags added near the top of <body> in every page.
 
+const firebaseConfig = {
+  apiKey: "AIzaSyBpsdkD_ozGgbq-Oaw-jlq2nQQMhIHDcU4",
+  authDomain: "dls-championship.firebaseapp.com",
+  projectId: "dls-championship",
+  storageBucket: "dls-championship.firebasestorage.app",
+  messagingSenderId: "721017018801",
+  appId: "1:721017018801:web:773049a54e6382dd040590",
+  measurementId: "G-5FQB5EQ8P1"
+};
+
+firebase.initializeApp(firebaseConfig);
+const firestoreDb = firebase.firestore();
+
+// Single document holding the entire app state — same shape as before,
+// just stored in Firestore instead of a JSONBin bin.
+const FIRESTORE_DOC_PATH = "dls_championship/state";
+
+// Kept for the one-time migration tool in admin.html (Settings → Migrate from JSONBin).
+// Not used for normal reads/writes anymore.
 const JSONBIN_BIN_ID = "6a4f8f67f5f4af5e297729db";
 const JSONBIN_API_KEY = "$2a$10$1YKDZY/xBG8zmm8plP.JvuExTB.4vK1B4fywqF7suieQOMYoocmKW";
 const JSONBIN_BASE = `https://api.jsonbin.io/v3/b/${JSONBIN_BIN_ID}`;
@@ -10,10 +31,10 @@ const ADMIN_SESSION_KEY = "dls_admin_unlocked_session";
 
 function emptyState() {
   return {
-    teams: [],
-    matches: [],
-    fixtures: [],
-    announcements: [],
+    teams: [],          // { id, name, logo, played, w, d, l, gf, ga, pts, form:[], history:[] }
+    matches: [],         // { id, teamAId, teamBId, scoreA, scoreB, ts, matchday }
+    fixtures: [],         // { id, teamAId, teamBId, kickoff (ISO string), matchday }
+    announcements: [],     // { id, text, ts }
     about: "",
     matchdayCounter: 1
   };
@@ -23,16 +44,15 @@ function uid() {
   return Math.random().toString(36).slice(2, 10) + Date.now().toString(36);
 }
 
-// ---- cloud read/write ----
+// ---- cloud read/write (Firestore) ----
 async function fetchData() {
-  const res = await fetch(JSONBIN_BASE + "/latest", {
-    method: "GET",
-    headers: { "X-Master-Key": JSONBIN_API_KEY }
-  });
-  if (!res.ok) throw new Error("Failed to load data (status " + res.status + ")");
-  const json = await res.json();
-  const record = json.record || {};
+  const docRef = firestoreDb.doc(FIRESTORE_DOC_PATH);
+  const snap = await docRef.get();
   const fresh = emptyState();
+  if (!snap.exists) {
+    return fresh;
+  }
+  const record = snap.data() || {};
   return {
     teams: Array.isArray(record.teams) ? record.teams : fresh.teams,
     matches: Array.isArray(record.matches) ? record.matches : fresh.matches,
@@ -48,16 +68,39 @@ async function fetchData() {
 }
 
 async function pushData(data) {
-  const res = await fetch(JSONBIN_BASE, {
-    method: "PUT",
-    headers: {
-      "Content-Type": "application/json",
-      "X-Master-Key": JSONBIN_API_KEY
-    },
-    body: JSON.stringify(data)
-  });
-  if (!res.ok) throw new Error("Failed to save data (status " + res.status + ")");
+  const docRef = firestoreDb.doc(FIRESTORE_DOC_PATH);
+  await docRef.set(data);
   return true;
+}
+
+// ---- one-time migration helper: pulls the old JSONBin data across into Firestore.
+// Call this manually from Admin → Danger Zone → "Migrate from JSONBin" — it is NOT
+// run automatically, so it never overwrites Firestore data by accident.
+async function migrateFromJsonBin() {
+  const res = await fetch(JSONBIN_BASE + "/latest", {
+    method: "GET",
+    headers: { "X-Master-Key": JSONBIN_API_KEY }
+  });
+  if (!res.ok) throw new Error("Could not reach JSONBin (status " + res.status + ")");
+  const json = await res.json();
+  const record = json.record || {};
+  const fresh = emptyState();
+
+  const migrated = {
+    teams: Array.isArray(record.teams) ? record.teams : fresh.teams,
+    matches: Array.isArray(record.matches) ? record.matches : fresh.matches,
+    fixtures: Array.isArray(record.fixtures) ? record.fixtures : fresh.fixtures,
+    announcements: Array.isArray(record.announcements)
+      ? record.announcements
+      : (typeof record.announcement === "string" && record.announcement
+          ? [{ id: uid(), text: record.announcement, ts: Date.now() }]
+          : fresh.announcements),
+    about: typeof record.about === "string" ? record.about : fresh.about,
+    matchdayCounter: typeof record.matchdayCounter === "number" ? record.matchdayCounter : 1
+  };
+
+  await pushData(migrated);
+  return migrated;
 }
 
 // ---- table logic ----
@@ -342,7 +385,6 @@ function teamFixtures(data, teamId) {
 
 // ---- fixture comparison stats ----
 
-// Head-to-head: every past match between these two teams, regardless of who was home/away.
 function headToHeadMatches(data, teamAId, teamBId) {
   return data.matches.filter(m =>
     (m.teamAId === teamAId && m.teamBId === teamBId) ||
@@ -350,11 +392,10 @@ function headToHeadMatches(data, teamAId, teamBId) {
   );
 }
 
-// Summarizes head-to-head results from teamAId's perspective.
 function headToHeadSummary(data, teamAId, teamBId) {
   const matches = headToHeadMatches(data, teamAId, teamBId);
   let winsA = 0, winsB = 0, draws = 0;
-  let highestWin = null; // { winnerId, scoreFor, scoreAgainst, ts }
+  let highestWin = null;
 
   matches.forEach(m => {
     const aIsTeamA = m.teamAId === teamAId;
@@ -379,7 +420,6 @@ function headToHeadSummary(data, teamAId, teamBId) {
   return { winsA, winsB, draws, totalMatches: matches.length, highestWin };
 }
 
-// Form percentage from a team's last 5 results: W=3pts, D=1pt, L=0, out of max 15.
 function formPercent(team) {
   if (!team.form || team.form.length === 0) return 0;
   const points = team.form.reduce((sum, r) => sum + (r === 'W' ? 3 : r === 'D' ? 1 : 0), 0);
@@ -387,7 +427,6 @@ function formPercent(team) {
   return Math.round((points / maxPossible) * 100);
 }
 
-// Season averages per match played: points per game and goals scored per game.
 function seasonAverages(team) {
   if (!team.played || team.played === 0) return { pointsPerGame: 0, goalsPerGame: 0 };
   return {
@@ -396,7 +435,6 @@ function seasonAverages(team) {
   };
 }
 
-// Returns a team's most recent 5 matches (opponent, score, W/D/L, home/away) for the "Last 5" strip.
 function recentMatchSummaries(data, teamId, count) {
   const matches = teamMatches(data, teamId)
     .slice()
@@ -438,4 +476,4 @@ function formatKickoff(iso) {
   const dateStr = d.toLocaleDateString(undefined, { weekday: 'short', month: 'short', day: 'numeric' });
   const timeStr = d.toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' });
   return `${dateStr} · ${timeStr}`;
-}
+                                                                                                  }
