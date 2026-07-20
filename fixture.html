@@ -25,6 +25,8 @@
   </footer>
 </div>
 
+<script src="https://www.gstatic.com/firebasejs/10.7.1/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.7.1/firebase-firestore-compat.js"></script>
 <script src="data.js"></script>
 <script>
   // apply whatever theme the viewer picked on the homepage (per-device, not synced)
@@ -52,9 +54,6 @@
     return div.innerHTML;
   }
 
-  // Estimate win/draw/win probability from each team's current form and points-per-game.
-  // This isn't a betting-grade model — it's a simple, transparent blend meant to give
-  // a quick "who's favored" read, the same way the reference bar communicates it.
   function estimateWinProbability(teamA, teamB){
     const formA = formPercent(teamA);
     const formB = formPercent(teamB);
@@ -114,7 +113,6 @@
     document.getElementById('wpCodeB').textContent = teamB.name.slice(0, 3).toUpperCase();
   }
 
-  // ---- header: team names + badges, matchday/kickoff ----
   function renderMatchupHeader(fixture, teamA, teamB){
     const box = document.getElementById('matchupHeaderBox');
     box.innerHTML = `
@@ -136,7 +134,6 @@
     document.getElementById('mhNameB').textContent = teamB.name;
   }
 
-  // ---- form circle (SVG ring) ----
   function formRingSVG(percent, color, size){
     const r = (size - 8) / 2;
     const c = size / 2;
@@ -152,7 +149,6 @@
     `;
   }
 
-  // ---- league position range gauge (vertical bar showing where each team sits) ----
   function positionGaugeSVG(posA, posB, totalTeams){
     const h = 140, topPad = 10, botPad = 10;
     const usableH = h - topPad - botPad;
@@ -208,7 +204,6 @@
     `;
   }
 
-  // ---- Last 5 matches, side by side ----
   function renderLast5(data, teamA, teamB){
     const box = document.getElementById('last5Box');
     const recentA = recentMatchSummaries(data, teamA.id, 5);
@@ -268,7 +263,6 @@
     });
   }
 
-  // ---- head-to-head donut + highest win ----
   function renderH2H(data, teamA, teamB){
     const box = document.getElementById('h2hBox');
     const summary = headToHeadSummary(data, teamA.id, teamB.id);
@@ -355,7 +349,6 @@
     }
   }
 
-  // ---- averages: points per game, goals per game ----
   function renderAverages(teamA, teamB){
     const box = document.getElementById('averagesBox');
     const avgA = seasonAverages(teamA);
